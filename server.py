@@ -44,6 +44,11 @@ def normalize_text(value):
     return text
 
 
+def normalize_match_token(value):
+    text = normalize_text(value)
+    return re.sub(r'[^\w\u4e00-\u9fff]+', '', text)
+
+
 def normalize_key(title, author):
     raw = f"{normalize_text(title)}|{normalize_text(author)}"
     return re.sub(r'[^\w\u4e00-\u9fff]+', '', raw)
@@ -63,6 +68,10 @@ def score_match(query_title, query_author, candidate_title, candidate_author):
     author_q = normalize_text(query_author)
     title_c = normalize_text(candidate_title)
     author_c = normalize_text(candidate_author)
+    title_q_key = normalize_match_token(query_title)
+    author_q_key = normalize_match_token(query_author)
+    title_c_key = normalize_match_token(candidate_title)
+    author_c_key = normalize_match_token(candidate_author)
 
     score = 0
     if title_q:
@@ -73,6 +82,14 @@ def score_match(query_title, query_author, candidate_title, candidate_author):
         elif title_q in title_c:
             score += 35
 
+    if title_q_key and title_c_key:
+        if title_c_key == title_q_key:
+            score += 35
+        elif title_c_key.startswith(title_q_key):
+            score += 22
+        elif title_q_key in title_c_key:
+            score += 14
+
     if author_q:
         if author_c == author_q:
             score += 35
@@ -80,6 +97,14 @@ def score_match(query_title, query_author, candidate_title, candidate_author):
             score += 22
         elif author_q in author_c:
             score += 15
+
+    if author_q_key and author_c_key:
+        if author_c_key == author_q_key:
+            score += 12
+        elif author_c_key.startswith(author_q_key):
+            score += 8
+        elif author_q_key in author_c_key:
+            score += 5
 
     return score
 
@@ -114,13 +139,28 @@ def append_discovery_resources(resources, title, author):
     query = urllib.parse.quote(f"{title} {author}".strip())
     out = list(resources or [])
 
-    # 统一判定是否已经有可直接阅读/借阅的资源
-    has_readable = any((r.get('type') in ('电子书', '在线阅读', '借阅')) for r in out)
-    if has_readable:
+    # 统一判定是否已经有“真正可读/可下载电子版”
+    has_ebook = any((r.get('type') in ('电子书', '在线阅读')) for r in out)
+    if has_ebook:
         return merge_resources(out)
 
-    # 兜底：合法平台检索入口，避免“完全找不到”
+    # 兜底：补充更有效的公开电子书检索入口
     out.extend([
+        {
+            'name': 'Open Library 检索',
+            'url': f'https://openlibrary.org/search?q={query}',
+            'type': '检索'
+        },
+        {
+            'name': 'Internet Archive 检索',
+            'url': f'https://archive.org/search?query={query}',
+            'type': '检索'
+        },
+        {
+            'name': 'Project Gutenberg 检索',
+            'url': f'https://www.gutenberg.org/ebooks/search/?query={query}',
+            'type': '检索'
+        },
         {
             'name': '豆瓣读书检索',
             'url': f'https://m.douban.com/search/?query={query}&type=book',
@@ -174,7 +214,9 @@ def fetch_douban_best_metadata(title, author=''):
         req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0'})
         search_html = urllib.request.urlopen(req, timeout=8).read().decode('utf-8', 'ignore')
 
-        subject_ids = re.findall(r'href="/book/subject/(\d+)/"', search_html)
+        subject_ids = re.findall(r'href="(?:https?://book\.douban\.com)?/book/subject/(\d+)/"', search_html)
+        if not subject_ids:
+            subject_ids = re.findall(r'/book/subject/(\d+)/', search_html)
         unique_ids = []
         for sid in subject_ids:
             if sid not in unique_ids:
@@ -240,6 +282,35 @@ def fetch_douban_best_metadata(title, author=''):
         return None
 
 
+def fetch_douban_candidates(title, author=''):
+    best = fetch_douban_best_metadata(title, author)
+    if not best:
+        return []
+
+    final_title = (best.get('title') or '').strip() or title
+    final_author = (best.get('author') or '').strip() or author
+    score = score_match(title, author, final_title, final_author)
+    if best.get('rating'):
+        score += 8
+    if has_real_synopsis(best.get('synopsis', '')):
+        score += 8
+
+    return [{
+        'title': final_title,
+        'author': final_author,
+        'synopsis': best.get('synopsis', ''),
+        'rating': best.get('rating'),
+        'ratingSource': best.get('ratingSource', ''),
+        'category': '文学小说',
+        'cover': '',
+        'year': None,
+        'source': '豆瓣',
+        'resources': merge_resources([best.get('resource', {})]),
+        '_score': max(score, 40),
+        '_work_key': ''
+    }]
+
+
 def build_openlibrary_resources(doc):
     resources = []
     title = doc.get('title', '')
@@ -261,11 +332,24 @@ def build_openlibrary_resources(doc):
             'type': '借阅'
         })
 
-    if doc.get('ebook_access') in ('public', 'borrowable', 'printdisabled') and doc.get('key'):
+    ebook_access = doc.get('ebook_access')
+    if ebook_access == 'public' and doc.get('key'):
         resources.append({
-            'name': 'Open Library 电子版入口',
+            'name': 'Open Library 在线阅读',
             'url': f"https://openlibrary.org{doc.get('key', '')}",
-            'type': '电子书'
+            'type': '在线阅读'
+        })
+    elif ebook_access == 'borrowable' and doc.get('key'):
+        resources.append({
+            'name': 'Open Library 借阅入口',
+            'url': f"https://openlibrary.org{doc.get('key', '')}",
+            'type': '借阅'
+        })
+    elif ebook_access == 'printdisabled' and doc.get('key'):
+        resources.append({
+            'name': 'Open Library 页面（受限）',
+            'url': f"https://openlibrary.org{doc.get('key', '')}",
+            'type': '详情'
         })
 
     resources.append({
@@ -285,15 +369,17 @@ def build_google_resources(item):
         resources.append({'name': 'Google Books 页面', 'url': volume['infoLink'], 'type': '详情'})
     if volume.get('previewLink'):
         resources.append({'name': 'Google Books 预览', 'url': volume['previewLink'], 'type': '预览'})
+    viewability = str(access.get('viewability', '')).upper()
     if access.get('webReaderLink'):
-        resources.append({'name': 'Google Web Reader', 'url': access['webReaderLink'], 'type': '在线阅读'})
+        reader_type = '在线阅读' if viewability == 'ALL_PAGES' else '预览'
+        resources.append({'name': 'Google Web Reader', 'url': access['webReaderLink'], 'type': reader_type})
 
     epub = (access.get('epub') or {})
     pdf = (access.get('pdf') or {})
-    if epub.get('isAvailable') and epub.get('acsTokenLink'):
-        resources.append({'name': 'Google EPUB 获取', 'url': epub['acsTokenLink'], 'type': '电子书'})
-    if pdf.get('isAvailable') and pdf.get('acsTokenLink'):
-        resources.append({'name': 'Google PDF 获取', 'url': pdf['acsTokenLink'], 'type': '电子书'})
+    if epub.get('isAvailable') and epub.get('downloadLink'):
+        resources.append({'name': 'Google EPUB 下载', 'url': epub['downloadLink'], 'type': '电子书'})
+    if pdf.get('isAvailable') and pdf.get('downloadLink'):
+        resources.append({'name': 'Google PDF 下载', 'url': pdf['downloadLink'], 'type': '电子书'})
 
     return merge_resources(resources)
 
@@ -675,11 +761,12 @@ def merge_candidates(candidates):
 def search_book_info(title, author=""):
     """聚合多个公开 API 搜索书籍并合并结果。"""
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             futures = [
                 executor.submit(fetch_openlibrary_candidates, title, author),
                 executor.submit(fetch_googlebooks_candidates, title, author),
                 executor.submit(fetch_gutendex_candidates, title, author),
+                executor.submit(fetch_douban_candidates, title, author),
             ]
 
             all_candidates = []
@@ -961,6 +1048,15 @@ def ensure_data_schema(data):
             book['votes'] = {}
         if 'reviews' not in book or not isinstance(book['reviews'], list):
             book['reviews'] = []
+        if 'resources' not in book or not isinstance(book['resources'], list):
+            book['resources'] = []
+
+        # 兼容历史数据：确保每本书至少有可点击的资源入口
+        book['resources'] = append_discovery_resources(
+            book.get('resources', []),
+            book.get('title', ''),
+            book.get('author', '')
+        )
 
     return data
 
@@ -1128,16 +1224,20 @@ def get_user_groups(data, user_id):
 
 
 def create_book_record(payload, added_by, group_id):
+    title = payload.get("title", "")
+    author = payload.get("author", "")
+    resources = append_discovery_resources(payload.get("resources", []), title, author)
+
     return {
         "id": str(uuid.uuid4()),
-        "title": payload.get("title", ""),
-        "author": payload.get("author", ""),
+        "title": title,
+        "author": author,
         "synopsis": payload.get("synopsis", ""),
         "rating": payload.get("rating"),
         "ratingSource": payload.get("ratingSource", ""),
         "category": payload.get("category", "未分类"),
         "cover": payload.get("cover", ""),
-        "resources": payload.get("resources", []),
+        "resources": resources,
         "addedBy": added_by,
         "addedAt": datetime.now(timezone.utc).isoformat(),
         "groupId": group_id,
