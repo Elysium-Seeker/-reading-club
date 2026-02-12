@@ -15,7 +15,7 @@
 ## 🚀 快速开始（本地运行）
 
 ### 需求
-- Python 3.6+ （无需安装任何Python包）
+- Python 3.8+
 
 ### 运行
 ```bash
@@ -59,19 +59,18 @@ python server.py
    - 完成后会得到一个公网 URL，类似 `https://reading-club-xyz.onrender.com`
    - 分享这个链接给所有朋友！
 
-#### Render 持久化（强烈建议）
+#### Render 免费版持久化（推荐 Supabase）
 
-为了避免服务重启后 `books.json` 丢失，请在 Render 给该服务挂载 Persistent Disk：
+Render 免费版通常不能依赖持久磁盘，建议改用 **Supabase Postgres** 做持久化。
 
-1. 在 Render 服务页打开 **Disks** → **Add Disk**
-2. 建议配置：
-   - **Name**: `reading-data`
-   - **Mount Path**: `/var/data`
-   - **Size**: 1 GB（最小即可）
-3. 在 **Environment Variables** 新增：
-   - `DATA_DIR=/var/data`
+1. 在 Supabase 创建项目，进入 **Project Settings → Database**，复制连接串（URI）
+2. 在 Render 的该服务 **Environment Variables** 新增：
+   - `DATABASE_URL=<你的 Supabase Postgres 连接串>`
+3. 确认 Render：
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `python server.py`
 
-项目会自动把数据文件写到 `${DATA_DIR}/books.json`。
+配置后应用会自动使用 Postgres 持久化，不再依赖本地 `books.json`。
 
 ### 方案 2：Railway
 
@@ -132,9 +131,9 @@ python server.py
 ## 📝 配置说明
 
 ### 数据存储
-- 数据保存在 `data/books.json`
+- 默认：数据保存在 `data/books.json`
+- 若设置 `DATABASE_URL`：自动切换为 Postgres 持久化（推荐云部署）
 - 每次操作自动保存
-- 可直接编辑 JSON 文件
 
 ### 自定义端口
 ```bash
@@ -198,16 +197,16 @@ Body: {userId, content}
 A: 系统使用 Open Library 数据库，数据库中没有的书无法搜索。可手动输入信息。
 
 **Q: 数据会丢失吗？**
-A: 不会。数据保存在 `books.json` 文件中。即使云平台重启也不会丢失。
+A: 本地模式保存在 `books.json`。云端建议配置 `DATABASE_URL`（Supabase Postgres），可避免 Render 免费实例重启导致的数据丢失。
 
 **Q: 可以自建数据库吗？**
-A: 可以。修改 `server.py` 中的 `read_data()` 和 `write_data()` 函数，连接你的数据库。
+A: 可以。项目原生支持 Postgres，只需设置 `DATABASE_URL` 环境变量。
 
 **Q: 支持用户注册和登录吗？**
 A: 当前版本不需要——只需在右上角输入昵称即可。如需身份验证，可自行修改。
 
 **Q: 可以导出数据吗？**
-A: 在云平台面板中下载 `books.json` 即可导出所有数据。
+A: 文件模式可直接下载 `books.json`；数据库模式可在 Supabase 导出表数据。
 
 ## 📄 许可证
 

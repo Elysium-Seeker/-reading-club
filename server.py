@@ -19,6 +19,12 @@ import urllib.parse
 import concurrent.futures
 import re
 import html as html_lib
+import threading
+
+try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None
 
 SEARCH_USER_AGENT = 'ReadingClubApp/1.0 (+https://openlibrary.org)'
 DOUBAN_CACHE = {}
@@ -27,6 +33,9 @@ PORT = int(os.environ.get('PORT', 3000))
 DATA_DIR = os.environ.get('DATA_DIR', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data'))
 DATA_FILE = os.path.join(DATA_DIR, 'books.json')
 PUBLIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public')
+DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
+USE_POSTGRES = bool(DATABASE_URL)
+DATA_LOCK = threading.Lock()
 
 
 def normalize_text(value):
@@ -831,17 +840,91 @@ def autocomplete_book(query):
     return suggestions[:10]
 
 
+def _ensure_postgres_ready():
+    if not USE_POSTGRES:
+        return
+    if psycopg2 is None:
+        raise RuntimeError('检测到 DATABASE_URL，但未安装 psycopg2。请执行: pip install -r requirements.txt')
+
+
+def _postgres_connect():
+    _ensure_postgres_ready()
+    return psycopg2.connect(DATABASE_URL)
+
+
+def _init_postgres_schema():
+    if not USE_POSTGRES:
+        return
+    with _postgres_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_state (
+                    id SMALLINT PRIMARY KEY CHECK (id = 1),
+                    data JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+        conn.commit()
+
+
+def _read_data_from_postgres():
+    initial = ensure_data_schema({"books": [], "groups": {}})
+    with _postgres_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT data FROM app_state WHERE id = 1")
+            row = cur.fetchone()
+            if row and row[0]:
+                payload = row[0]
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+                return ensure_data_schema(payload)
+
+            cur.execute(
+                """
+                INSERT INTO app_state (id, data, updated_at)
+                VALUES (1, %s::jsonb, NOW())
+                ON CONFLICT (id)
+                DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
+                """,
+                (json.dumps(initial, ensure_ascii=False),)
+            )
+        conn.commit()
+    return initial
+
+
+def _write_data_to_postgres(data):
+    payload = ensure_data_schema(data)
+    with _postgres_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO app_state (id, data, updated_at)
+                VALUES (1, %s::jsonb, NOW())
+                ON CONFLICT (id)
+                DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
+                """,
+                (json.dumps(payload, ensure_ascii=False),)
+            )
+        conn.commit()
+
+
 def read_data():
     """读取数据文件"""
-    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-    if not os.path.exists(DATA_FILE):
-        initial = {"books": [], "groups": {}}
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(initial, f, ensure_ascii=False, indent=2)
-        return initial
-    with open(DATA_FILE, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-        return ensure_data_schema(data)
+    with DATA_LOCK:
+        if USE_POSTGRES:
+            return _read_data_from_postgres()
+
+        os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+        if not os.path.exists(DATA_FILE):
+            initial = {"books": [], "groups": {}}
+            with open(DATA_FILE, 'w', encoding='utf-8') as f:
+                json.dump(initial, f, ensure_ascii=False, indent=2)
+            return initial
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return ensure_data_schema(data)
 
 
 def ensure_data_schema(data):
@@ -884,9 +967,14 @@ def ensure_data_schema(data):
 
 def write_data(data):
     """写入数据文件"""
-    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    with DATA_LOCK:
+        if USE_POSTGRES:
+            _write_data_to_postgres(data)
+            return
+
+        os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def ensure_group(data, group_id):
@@ -1478,6 +1566,12 @@ class ThreadedServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 if __name__ == '__main__':
+    try:
+        _init_postgres_schema()
+    except Exception as e:
+        print(f'❌ 数据存储初始化失败: {e}')
+        raise
+
     server = ThreadedServer(('0.0.0.0', PORT), BookHandler)
     print(f'📚 阅读计划管理工具已启动!')
     print(f'   本地访问: http://localhost:{PORT}')
