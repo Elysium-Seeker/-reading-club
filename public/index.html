@@ -696,7 +696,7 @@
 三体 | 刘慈欣
 局外人 | 阿尔贝·加缪" style="width:100%; min-height:110px; padding:10px; border:1px solid var(--border); border-radius:8px; resize:vertical; font-family:inherit;"></textarea>
         <div style="display:flex; justify-content:flex-end; margin-top:8px;">
-          <button class="btn-confirm" type="button" onclick="submitBulkBooks()">批量添加</button>
+          <button class="btn-confirm" id="bulkSubmitBtn" type="button" onclick="submitBulkBooks()">批量添加</button>
         </div>
       </div>
     </div>
@@ -807,7 +807,19 @@ async function api(url, method = 'GET', body = null) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(url, opts);
-  return res.json();
+  const raw = await res.text();
+  let data = {};
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    data = { error: raw || `请求失败（${res.status}）` };
+  }
+  data._ok = res.ok;
+  data._status = res.status;
+  if (!res.ok && !data.error) {
+    data.error = `请求失败（${res.status}）`;
+  }
+  return data;
 }
 
 async function loadBooks() {
@@ -1136,6 +1148,8 @@ async function submitBook() {
 }
 
 async function submitBulkBooks() {
+  const submitBtn = document.getElementById('bulkSubmitBtn');
+  const originText = submitBtn ? submitBtn.textContent : '批量添加';
   const raw = document.getElementById('bulkTitles').value;
   const lines = raw
     .split(/\r?\n/)
@@ -1147,21 +1161,35 @@ async function submitBulkBooks() {
     return;
   }
 
-  const result = await api('/api/books/bulk', 'POST', {
-    entries: lines,
-    addedBy: getUserId(),
-    groupId: getActiveGroupId()
-  });
+  try {
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = '批量添加中...';
+    }
 
-  if (result.error) {
-    alert(result.error);
-    return;
+    const result = await api('/api/books/bulk', 'POST', {
+      entries: lines,
+      addedBy: getUserId(),
+      groupId: getActiveGroupId()
+    });
+
+    if (!result._ok || result.error) {
+      alert(result.error || '批量添加失败，请稍后重试');
+      return;
+    }
+
+    const skipped = Array.isArray(result.skipped) ? result.skipped.length : 0;
+    alert(`批量上传完成：成功 ${result.count || 0} 本，跳过 ${skipped} 本`);
+    closeAddModal();
+    await loadBooks();
+  } catch (e) {
+    alert(`批量添加失败：${e.message || e}`);
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = originText;
+    }
   }
-
-  const skipped = Array.isArray(result.skipped) ? result.skipped.length : 0;
-  alert(`批量上传完成：成功 ${result.count || 0} 本，跳过 ${skipped} 本`);
-  closeAddModal();
-  await loadBooks();
 }
 
 // ========== 删除书籍 ==========
