@@ -24,7 +24,8 @@ SEARCH_USER_AGENT = 'ReadingClubApp/1.0 (+https://openlibrary.org)'
 DOUBAN_CACHE = {}
 
 PORT = int(os.environ.get('PORT', 3000))
-DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'books.json')
+DATA_DIR = os.environ.get('DATA_DIR', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data'))
+DATA_FILE = os.path.join(DATA_DIR, 'books.json')
 PUBLIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public')
 
 
@@ -834,12 +835,35 @@ def read_data():
     """读取数据文件"""
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
     if not os.path.exists(DATA_FILE):
-        initial = {"books": []}
+        initial = {"books": [], "groups": {}}
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(initial, f, ensure_ascii=False, indent=2)
         return initial
     with open(DATA_FILE, 'r', encoding='utf-8') as f:
-        return json.load(f)
+        data = json.load(f)
+        return ensure_data_schema(data)
+
+
+def ensure_data_schema(data):
+    if 'books' not in data or not isinstance(data['books'], list):
+        data['books'] = []
+    if 'groups' not in data or not isinstance(data['groups'], dict):
+        data['groups'] = {}
+
+    for book in data['books']:
+        if 'groupId' not in book:
+            book['groupId'] = 'default'
+        if 'userStatuses' not in book or not isinstance(book['userStatuses'], dict):
+            # 兼容旧版 status
+            base_status = book.get('status', 'candidate')
+            added_by = book.get('addedBy', '匿名')
+            book['userStatuses'] = {added_by: base_status}
+        if 'votes' not in book or not isinstance(book['votes'], dict):
+            book['votes'] = {}
+        if 'reviews' not in book or not isinstance(book['reviews'], list):
+            book['reviews'] = []
+
+    return data
 
 
 def write_data(data):
@@ -847,6 +871,124 @@ def write_data(data):
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def ensure_group(data, group_id):
+    if not group_id:
+        return
+    if group_id not in data['groups']:
+        data['groups'][group_id] = {
+            'id': group_id,
+            'members': [],
+            'createdAt': datetime.now(timezone.utc).isoformat()
+        }
+
+
+def ensure_member(data, group_id, user_id):
+    if not group_id or not user_id:
+        return
+    ensure_group(data, group_id)
+    members = data['groups'][group_id].get('members', [])
+    if user_id not in members:
+        members.append(user_id)
+    data['groups'][group_id]['members'] = members
+
+
+def get_books_by_group(data, group_id):
+    if not group_id:
+        return data['books']
+    return [b for b in data['books'] if b.get('groupId') == group_id]
+
+
+def build_user_profile(data, user_id, group_id):
+    books = get_books_by_group(data, group_id)
+    shelves = {'candidate': [], 'reading': [], 'finished': []}
+    reviews = []
+
+    for book in books:
+        status = (book.get('userStatuses') or {}).get(user_id)
+        if status in shelves:
+            shelves[status].append({
+                'id': book.get('id'),
+                'title': book.get('title'),
+                'author': book.get('author'),
+                'cover': book.get('cover'),
+                'rating': book.get('rating')
+            })
+
+        for review in (book.get('reviews') or []):
+            if review.get('userId') == user_id:
+                reviews.append({
+                    'bookId': book.get('id'),
+                    'bookTitle': book.get('title'),
+                    'reviewId': review.get('id'),
+                    'rating': review.get('rating'),
+                    'content': review.get('content'),
+                    'createdAt': review.get('createdAt')
+                })
+
+    return {
+        'userId': user_id,
+        'groupId': group_id,
+        'shelves': shelves,
+        'reviews': reviews
+    }
+
+
+def build_group_overview(data, group_id):
+    ensure_group(data, group_id)
+    books = get_books_by_group(data, group_id)
+    members = data['groups'][group_id].get('members', [])
+
+    per_user = {}
+    for member in members:
+        per_user[member] = {'candidate': [], 'reading': [], 'finished': []}
+
+    everyone_reading = []
+
+    for book in books:
+        user_statuses = book.get('userStatuses') or {}
+        reading_users = []
+        for member in members:
+            status = user_statuses.get(member)
+            if status in ('candidate', 'reading', 'finished'):
+                per_user[member][status].append({
+                    'id': book.get('id'),
+                    'title': book.get('title'),
+                    'author': book.get('author')
+                })
+            if status == 'reading':
+                reading_users.append(member)
+
+        if len(reading_users) >= 2:
+            everyone_reading.append({
+                'id': book.get('id'),
+                'title': book.get('title'),
+                'author': book.get('author'),
+                'users': reading_users
+            })
+
+    group_reviews = []
+    for book in books:
+        for review in (book.get('reviews') or []):
+            if review.get('userId') in members:
+                group_reviews.append({
+                    'bookId': book.get('id'),
+                    'bookTitle': book.get('title'),
+                    'userId': review.get('userId'),
+                    'reviewId': review.get('id'),
+                    'content': review.get('content'),
+                    'rating': review.get('rating'),
+                    'createdAt': review.get('createdAt')
+                })
+
+    return {
+        'groupId': group_id,
+        'members': members,
+        'perUserShelves': per_user,
+        'everyoneReading': everyone_reading,
+        'reviews': group_reviews
+    }
 
 
 class BookHandler(http.server.SimpleHTTPRequestHandler):
@@ -883,7 +1025,16 @@ class BookHandler(http.server.SimpleHTTPRequestHandler):
 
         if path == '/api/books':
             data = read_data()
-            self.send_json(data['books'])
+            group_id = query_params.get('groupId', [''])[0].strip()
+            user_id = query_params.get('userId', [''])[0].strip()
+            books = get_books_by_group(data, group_id)
+            result = []
+            for book in books:
+                item = dict(book)
+                user_statuses = book.get('userStatuses') or {}
+                item['status'] = user_statuses.get(user_id, 'candidate') if user_id else book.get('status', 'candidate')
+                result.append(item)
+            self.send_json(result)
         elif path == '/api/search-book':
             # 搜索书籍信息
             title = query_params.get('title', [''])[0]
@@ -899,6 +1050,23 @@ class BookHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json([])
                 return
             self.send_json(autocomplete_book(query))
+        elif path.startswith('/api/users/') and path.endswith('/profile'):
+            parts = path.strip('/').split('/')
+            user_id = parts[2] if len(parts) >= 4 else ''
+            group_id = query_params.get('groupId', [''])[0].strip()
+            if not user_id or not group_id:
+                self.send_json({'error': '缺少 userId 或 groupId'}, 400)
+                return
+            data = read_data()
+            self.send_json(build_user_profile(data, user_id, group_id))
+        elif path.startswith('/api/groups/') and path.endswith('/overview'):
+            parts = path.strip('/').split('/')
+            group_id = parts[2] if len(parts) >= 4 else ''
+            if not group_id:
+                self.send_json({'error': '缺少 groupId'}, 400)
+                return
+            data = read_data()
+            self.send_json(build_group_overview(data, group_id))
         elif path.startswith('/api/'):
             self.send_json({"error": "未找到"}, 404)
         else:
@@ -909,10 +1077,26 @@ class BookHandler(http.server.SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
+        if path == '/api/session/join':
+            body = self.read_body()
+            user_id = str(body.get('userId', '')).strip()
+            group_id = str(body.get('groupId', '')).strip()
+            if not user_id or not group_id:
+                self.send_json({'error': 'userId 和 groupId 不能为空'}, 400)
+                return
+            data = read_data()
+            ensure_member(data, group_id, user_id)
+            write_data(data)
+            self.send_json({'userId': user_id, 'groupId': group_id, 'success': True})
+            return
+
         # 添加书籍
         if path == '/api/books':
             body = self.read_body()
             data = read_data()
+            group_id = str(body.get('groupId', '')).strip() or 'default'
+            added_by = body.get('addedBy', '匿名')
+            ensure_member(data, group_id, added_by)
             book = {
                 "id": str(uuid.uuid4()),
                 "title": body.get("title", ""),
@@ -923,9 +1107,11 @@ class BookHandler(http.server.SimpleHTTPRequestHandler):
                 "category": body.get("category", "未分类"),
                 "cover": body.get("cover", ""),
                 "resources": body.get("resources", []),
-                "addedBy": body.get("addedBy", "匿名"),
+                "addedBy": added_by,
                 "addedAt": datetime.now(timezone.utc).isoformat(),
+                "groupId": group_id,
                 "status": "candidate",
+                "userStatuses": {added_by: "candidate"},
                 "votes": {},
                 "reviews": []
             }
@@ -951,6 +1137,7 @@ class BookHandler(http.server.SimpleHTTPRequestHandler):
                 if 'votes' not in book:
                     book['votes'] = {}
                 book['votes'][user_id] = True
+            ensure_member(data, book.get('groupId', 'default'), user_id)
             write_data(data)
             self.send_json(book)
             return
@@ -972,6 +1159,7 @@ class BookHandler(http.server.SimpleHTTPRequestHandler):
                 "createdAt": datetime.now(timezone.utc).isoformat(),
                 "comments": []
             }
+            ensure_member(data, book.get('groupId', 'default'), review['userId'])
             if 'reviews' not in book:
                 book['reviews'] = []
             book['reviews'].append(review)
@@ -1026,6 +1214,15 @@ class BookHandler(http.server.SimpleHTTPRequestHandler):
             for key in allowed:
                 if key in body:
                     book[key] = body[key]
+
+            # 用户维度状态
+            user_id = str(body.get('userId', '')).strip()
+            if user_id and body.get('status') in ('candidate', 'reading', 'finished'):
+                if 'userStatuses' not in book or not isinstance(book['userStatuses'], dict):
+                    book['userStatuses'] = {}
+                book['userStatuses'][user_id] = body.get('status')
+                ensure_member(data, book.get('groupId', 'default'), user_id)
+
             write_data(data)
             self.send_json(book)
             return

@@ -59,6 +59,20 @@ python server.py
    - 完成后会得到一个公网 URL，类似 `https://reading-club-xyz.onrender.com`
    - 分享这个链接给所有朋友！
 
+#### Render 持久化（强烈建议）
+
+为了避免服务重启后 `books.json` 丢失，请在 Render 给该服务挂载 Persistent Disk：
+
+1. 在 Render 服务页打开 **Disks** → **Add Disk**
+2. 建议配置：
+   - **Name**: `reading-data`
+   - **Mount Path**: `/var/data`
+   - **Size**: 1 GB（最小即可）
+3. 在 **Environment Variables** 新增：
+   - `DATA_DIR=/var/data`
+
+项目会自动把数据文件写到 `${DATA_DIR}/books.json`。
+
 ### 方案 2：Railway
 
 1. **连接 Railway**

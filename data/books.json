@@ -13,7 +13,11 @@
       "addedAt": "2026-02-12T10:00:00.000Z",
       "status": "candidate",
       "votes": {},
-      "reviews": []
+      "reviews": [],
+      "groupId": "default",
+      "userStatuses": {
+        "示例": "candidate"
+      }
     },
     {
       "id": "sample-002",
@@ -28,7 +32,11 @@
       "addedAt": "2026-02-12T10:01:00.000Z",
       "status": "candidate",
       "votes": {},
-      "reviews": []
+      "reviews": [],
+      "groupId": "default",
+      "userStatuses": {
+        "示例": "candidate"
+      }
     },
     {
       "id": "sample-003",
@@ -43,7 +51,11 @@
       "addedAt": "2026-02-12T10:02:00.000Z",
       "status": "candidate",
       "votes": {},
-      "reviews": []
+      "reviews": [],
+      "groupId": "default",
+      "userStatuses": {
+        "示例": "candidate"
+      }
     },
     {
       "id": "36afee66-fc80-4284-8333-1e8d6f6abf22",
@@ -90,7 +102,40 @@
       "addedAt": "2026-02-12T09:29:03.079713+00:00",
       "status": "candidate",
       "votes": {},
+      "reviews": [],
+      "groupId": "default",
+      "userStatuses": {
+        "匿名": "candidate"
+      }
+    },
+    {
+      "id": "b0c4e544-b2a6-47e7-b7bd-fbc24f5d3b56",
+      "title": "?????",
+      "author": "AI",
+      "synopsis": "",
+      "rating": null,
+      "ratingSource": "",
+      "category": "??",
+      "cover": "",
+      "resources": [],
+      "addedBy": "alice",
+      "addedAt": "2026-02-12T12:06:16.045288+00:00",
+      "groupId": "g1",
+      "status": "reading",
+      "userStatuses": {
+        "alice": "reading"
+      },
+      "votes": {},
       "reviews": []
     }
-  ]
+  ],
+  "groups": {
+    "g1": {
+      "id": "g1",
+      "members": [
+        "alice"
+      ],
+      "createdAt": "2026-02-12T12:06:07.178597+00:00"
+    }
+  }
 }

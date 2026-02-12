@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>书评与讨论</title>
+  <style>
+    body{font-family:'Segoe UI','Microsoft YaHei',sans-serif;background:#f5f0eb;color:#3a3a3a;margin:0}
+    .wrap{max-width:980px;margin:0 auto;padding:20px}
+    .top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .btn{padding:6px 12px;border:1px solid #d8c7b7;border-radius:8px;background:#fff;text-decoration:none;color:#5b4636}
+    .card{background:#fff;border:1px solid #eadfd5;border-radius:12px;padding:14px;margin-top:14px}
+    .meta{font-size:12px;color:#777}
+    textarea,input{width:100%;box-sizing:border-box;border:1px solid #d8c7b7;border-radius:8px;padding:8px}
+    .row{display:flex;gap:8px;margin-top:8px}
+    .comment{margin-top:8px;padding-left:10px;border-left:2px solid #efdfc9}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <a class="btn" id="backHome" href="index.html">← 返回书单</a>
+      <a class="btn" id="toProfile" href="profile.html">个人页</a>
+      <a class="btn" id="toGroup" href="group.html">群组页</a>
+      <h2 style="margin:0 0 0 auto;">💬 书评与讨论</h2>
+    </div>
+    <div id="content"></div>
+  </div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const bookId = params.get('bookId') || '';
+const userId = params.get('userId') || localStorage.getItem('readingclub_userId') || '';
+const groupId = params.get('groupId') || localStorage.getItem('readingclub_groupId') || '';
+
+localStorage.setItem('readingclub_userId', userId);
+localStorage.setItem('readingclub_groupId', groupId);
+
+document.getElementById('backHome').href = `index.html?userId=${encodeURIComponent(userId)}&groupId=${encodeURIComponent(groupId)}`;
+document.getElementById('toProfile').href = `profile.html?userId=${encodeURIComponent(userId)}&groupId=${encodeURIComponent(groupId)}`;
+document.getElementById('toGroup').href = `group.html?userId=${encodeURIComponent(userId)}&groupId=${encodeURIComponent(groupId)}`;
+
+async function api(url, method='GET', body=null){
+  const opts={method,headers:{'Content-Type':'application/json'}};
+  if(body) opts.body=JSON.stringify(body);
+  const res=await fetch(url,opts);
+  return res.json();
+}
+
+async function load(){
+  if(!userId || !groupId){
+    document.getElementById('content').innerHTML='<div class="card">请先回到首页填写 ID 与群组。</div>';
+    return;
+  }
+  const books = await api(`/api/books?groupId=${encodeURIComponent(groupId)}&userId=${encodeURIComponent(userId)}`);
+  const targetBooks = bookId ? books.filter(b=>b.id===bookId) : books;
+  if(!targetBooks.length){
+    document.getElementById('content').innerHTML='<div class="card">暂无书评数据。</div>';
+    return;
+  }
+
+  document.getElementById('content').innerHTML = targetBooks.map(b => {
+    const reviews = b.reviews || [];
+    return `<div class="card">
+      <h3 style="margin:0;">${esc(b.title)}</h3>
+      <div class="meta">${esc(b.author||'')} · 书评 ${reviews.length}</div>
+      <div style="margin-top:10px;">
+        ${reviews.map(r=>`<div class="card" style="margin-top:8px;background:#faf7f2;">
+          <div class="meta">@${esc(r.userId)} · ${fmt(r.createdAt)} ${r.rating?('· '+'⭐'.repeat(r.rating)):''}</div>
+          <div style="margin-top:6px;white-space:pre-wrap;">${esc(r.content||'')}</div>
+          <div class="comment">
+            ${(r.comments||[]).map(c=>`<div style="margin-top:6px;"><span class="meta">@${esc(c.userId)} · ${fmt(c.createdAt)}</span><div>${esc(c.content||'')}</div></div>`).join('')}
+            <div class="row">
+              <input id="comment-${b.id}-${r.id}" placeholder="回复讨论..." />
+              <button class="btn" onclick="addComment('${b.id}','${r.id}')">发送</button>
+            </div>
+          </div>
+        </div>`).join('')}
+      </div>
+      <div class="card" style="margin-top:10px;background:#faf7f2;">
+        <div class="meta">发布新书评</div>
+        <textarea id="review-${b.id}" rows="3" placeholder="写下你的看法..."></textarea>
+        <div class="row">
+          <input id="rating-${b.id}" type="number" min="1" max="5" step="1" placeholder="评分 1-5（可空）" />
+          <button class="btn" onclick="addReview('${b.id}')">发布</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function addReview(bookId){
+  const content = document.getElementById(`review-${bookId}`).value.trim();
+  if(!content){alert('请输入书评内容');return;}
+  const ratingRaw = document.getElementById(`rating-${bookId}`).value.trim();
+  await api(`/api/books/${bookId}/reviews`,'POST',{userId,content,rating:ratingRaw?parseInt(ratingRaw):null});
+  await load();
+}
+
+async function addComment(bookId, reviewId){
+  const input = document.getElementById(`comment-${bookId}-${reviewId}`);
+  const content = input.value.trim();
+  if(!content) return;
+  await api(`/api/books/${bookId}/reviews/${reviewId}/comments`,'POST',{userId,content});
+  await load();
+}
+
+function esc(s){const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML;}
+function fmt(i){if(!i) return ''; const d=new Date(i); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+
+load();
+</script>
+</body>
+</html>

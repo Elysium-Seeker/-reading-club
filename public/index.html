@@ -580,8 +580,17 @@
     <div class="user-bar">
       <label>👤 我的 ID:</label>
       <input type="text" id="userId" placeholder="输入你的昵称" />
+      <label>👥 群组:</label>
+      <input type="text" id="groupId" placeholder="群组ID" />
     </div>
   </div>
+</div>
+
+<div class="toolbar" style="margin-top:10px;">
+  <a class="filter-btn active" href="index.html">🏠 书单</a>
+  <a class="filter-btn" id="myPageLink" href="profile.html">👤 个人主页</a>
+  <a class="filter-btn" id="groupPageLink" href="group.html">👥 群组页</a>
+  <a class="filter-btn" id="reviewPageLink" href="reviews.html">💬 书评广场</a>
 </div>
 
 <!-- 工具栏 -->
@@ -700,6 +709,23 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="sessionModal" style="z-index:300;">
+  <div class="modal" style="max-width:420px;">
+    <h2>欢迎加入阅读群组</h2>
+    <div class="form-group">
+      <label>你的 ID（必填）</label>
+      <input type="text" id="sessionUserId" placeholder="例如：alice" />
+    </div>
+    <div class="form-group">
+      <label>群组 ID（必填）</label>
+      <input type="text" id="sessionGroupId" placeholder="例如：bookclub-2026" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn-confirm" onclick="confirmSession()">进入群组</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ========== 全局状态 ==========
 let books = [];
@@ -709,16 +735,68 @@ let searchQuery = '';
 let deleteTarget = null;
 let expandedReviews = {};
 let selectedSearchResources = [];
+let sessionReady = false;
 
 // 用户 ID
 const userIdInput = document.getElementById('userId');
+const groupIdInput = document.getElementById('groupId');
 userIdInput.value = localStorage.getItem('readingclub_userId') || '';
+groupIdInput.value = localStorage.getItem('readingclub_groupId') || '';
 userIdInput.addEventListener('input', () => {
   localStorage.setItem('readingclub_userId', userIdInput.value);
+  updateNavLinks();
+});
+groupIdInput.addEventListener('input', () => {
+  localStorage.setItem('readingclub_groupId', groupIdInput.value);
+  updateNavLinks();
 });
 
 function getUserId() {
-  return userIdInput.value.trim() || '匿名';
+  return userIdInput.value.trim();
+}
+
+function getGroupId() {
+  return groupIdInput.value.trim();
+}
+
+function updateNavLinks() {
+  const params = new URLSearchParams({ userId: getUserId(), groupId: getGroupId() }).toString();
+  document.getElementById('myPageLink').href = `profile.html?${params}`;
+  document.getElementById('groupPageLink').href = `group.html?${params}`;
+  document.getElementById('reviewPageLink').href = `reviews.html?${params}`;
+}
+
+async function requireSession() {
+  const uid = getUserId();
+  const gid = getGroupId();
+  if (uid && gid) {
+    await api('/api/session/join', 'POST', { userId: uid, groupId: gid });
+    sessionReady = true;
+    updateNavLinks();
+    return true;
+  }
+  document.getElementById('sessionUserId').value = uid;
+  document.getElementById('sessionGroupId').value = gid;
+  document.getElementById('sessionModal').classList.add('show');
+  return false;
+}
+
+async function confirmSession() {
+  const uid = document.getElementById('sessionUserId').value.trim();
+  const gid = document.getElementById('sessionGroupId').value.trim();
+  if (!uid || !gid) {
+    alert('ID 和群组 ID 都不能为空');
+    return;
+  }
+  userIdInput.value = uid;
+  groupIdInput.value = gid;
+  localStorage.setItem('readingclub_userId', uid);
+  localStorage.setItem('readingclub_groupId', gid);
+  await api('/api/session/join', 'POST', { userId: uid, groupId: gid });
+  document.getElementById('sessionModal').classList.remove('show');
+  sessionReady = true;
+  updateNavLinks();
+  await loadBooks();
 }
 
 // ========== API 调用 ==========
@@ -730,7 +808,12 @@ async function api(url, method = 'GET', body = null) {
 }
 
 async function loadBooks() {
-  books = await api('/api/books');
+  if (!sessionReady) {
+    const ok = await requireSession();
+    if (!ok) return;
+  }
+  const params = new URLSearchParams({ userId: getUserId(), groupId: getGroupId() });
+  books = await api(`/api/books?${params}`);
   render();
 }
 
@@ -779,23 +862,24 @@ function renderBookCard(book) {
   const voters = Object.keys(book.votes || {}).join(', ') || '暂无';
   const statusLabels = { candidate: '备选', reading: '在读', finished: '已读' };
   const reviewCount = (book.reviews || []).length;
-  const isExpanded = expandedReviews[book.id];
 
   const coverHtml = book.cover
     ? `<div class="book-cover"><img src="${escHtml(book.cover)}" alt="封面" onerror="this.parentElement.innerHTML='📖'" /></div>`
     : `<div class="book-cover">📖</div>`;
 
-  const reviewsHtml = isExpanded ? renderReviews(book) : '';
   const resourcePriority = { '电子书': 1, '在线阅读': 2, '借阅': 3, '预览': 4, '详情': 5, '检索': 6 };
   const resources = (book.resources || [])
     .slice()
     .sort((a, b) => (resourcePriority[a.type] || 99) - (resourcePriority[b.type] || 99))
-    .slice(0, 5);
+    .slice(0, 8);
   const resourcesHtml = resources.length
-    ? `<div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">
-        ${resources.map(r => `<a href="${escHtml(r.url || '#')}" target="_blank" rel="noopener noreferrer" style="font-size:0.75em; padding:2px 8px; border-radius:12px; background:var(--accent-light); color:var(--primary); text-decoration:none;">${escHtml(r.type ? r.type + '·' : '')}${escHtml(r.name || '资源')}</a>`).join('')}
-      </div>`
+    ? `<details style="margin-top:8px;"><summary style="cursor:pointer; font-size:0.8em; color:var(--primary)">资源链接 (${resources.length})</summary>
+        <div style="margin-top:6px; display:flex; flex-direction:column; gap:6px;">
+          ${resources.map(r => `<a href="${escHtml(r.url || '#')}" target="_blank" rel="noopener noreferrer" style="font-size:0.78em; color:var(--primary); text-decoration:none; background:var(--accent-light); border-radius:12px; padding:3px 10px; width:max-content;">${escHtml(r.type ? r.type + '：' : '')}${escHtml(r.name || '资源')}</a>`).join('')}
+        </div>
+      </details>`
     : '';
+  const voteListHtml = `<details style="margin-left:6px;"><summary style="cursor:pointer; font-size:0.75em; color:#666;">想读名单</summary><div style="font-size:0.75em; color:#666; max-width:180px;">${escHtml(voters)}</div></details>`;
 
   return `
     <div class="book-card">
@@ -819,18 +903,16 @@ function renderBookCard(book) {
         <button class="btn-sm btn-vote ${voted ? 'voted' : ''}" onclick="toggleVote('${book.id}')" title="想读的人：${escHtml(voters)}">
           ${voted ? '❤️' : '🤍'} 想读 (${voteCount})
         </button>
+        ${voteListHtml}
         <select class="status-select" onchange="changeStatus('${book.id}', this.value)">
           <option value="candidate" ${book.status === 'candidate' ? 'selected' : ''}>📋 备选</option>
           <option value="reading" ${book.status === 'reading' ? 'selected' : ''}>📖 在读</option>
           <option value="finished" ${book.status === 'finished' ? 'selected' : ''}>✅ 已读</option>
         </select>
-        <button class="btn-sm btn-review" onclick="toggleReviews('${book.id}')">
-          💬 书评 (${reviewCount})
-        </button>
+        <a class="btn-sm btn-review" style="text-decoration:none;" href="reviews.html?bookId=${book.id}&userId=${encodeURIComponent(getUserId())}&groupId=${encodeURIComponent(getGroupId())}">💬 书评 (${reviewCount})</a>
         <button class="btn-sm btn-del" onclick="openDeleteModal('${book.id}', '${escHtml(book.title)}')">🗑️</button>
         <span class="book-added-by">由 ${escHtml(book.addedBy)} 添加</span>
       </div>
-      ${isExpanded ? `<div class="reviews-section">${reviewsHtml}</div>` : ''}
     </div>`;
 }
 
@@ -898,12 +980,12 @@ function toggleReviews(bookId) {
 }
 
 async function toggleVote(bookId) {
-  await api(`/api/books/${bookId}/vote`, 'POST', { userId: getUserId() });
+  await api(`/api/books/${bookId}/vote`, 'POST', { userId: getUserId(), groupId: getGroupId() });
   await loadBooks();
 }
 
 async function changeStatus(bookId, status) {
-  await api(`/api/books/${bookId}`, 'PUT', { status });
+  await api(`/api/books/${bookId}`, 'PUT', { status, userId: getUserId(), groupId: getGroupId() });
   await loadBooks();
 }
 
@@ -950,7 +1032,9 @@ async function deleteComment(bookId, reviewId, commentId) {
 }
 
 // ========== 添加书籍 ==========
-function openAddModal() {
+async function openAddModal() {
+  const ok = await requireSession();
+  if (!ok) return;
   document.getElementById('addModal').classList.add('show');
   document.getElementById('inputTitle').focus();
 }
@@ -1041,7 +1125,8 @@ async function submitBook() {
     cover: document.getElementById('inputCover').value.trim(),
     synopsis: document.getElementById('inputSynopsis').value.trim(),
     resources: selectedSearchResources,
-    addedBy: getUserId()
+    addedBy: getUserId(),
+    groupId: getGroupId()
   });
   closeAddModal();
   await loadBooks();
@@ -1066,9 +1151,9 @@ async function confirmDelete() {
 }
 
 // ========== 筛选排序搜索 ==========
-document.querySelectorAll('.filter-btn').forEach(btn => {
+document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.filter-btn[data-filter]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     currentFilter = btn.dataset.filter;
     render();
@@ -1121,7 +1206,9 @@ document.querySelectorAll('.modal-overlay').forEach(el => {
 });
 
 // ========== 初始化 ==========
-loadBooks();
+requireSession().then(ok => {
+  if (ok) loadBooks();
+});
 
 // 自动轮询刷新（协作用，每 5 秒）
 setInterval(loadBooks, 5000);
