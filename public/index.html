@@ -232,9 +232,30 @@
     color: #666;
     line-height: 1.5;
     display: -webkit-box;
+    line-clamp: 3;
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
+  }
+  .book-synopsis.expanded {
+    display: block;
+    line-clamp: unset;
+    -webkit-line-clamp: initial;
+    -webkit-box-orient: initial;
+    overflow: visible;
+  }
+  .synopsis-toggle {
+    margin-top: 6px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 0.78em;
+    font-weight: 600;
+  }
+  .synopsis-toggle:hover {
+    text-decoration: underline;
   }
 
   .book-actions {
@@ -742,6 +763,7 @@ let currentSort = 'addedAt';
 let searchQuery = '';
 let deleteTarget = null;
 let expandedReviews = {};
+let expandedSynopsis = {};
 let selectedSearchResources = [];
 let sessionReady = false;
 
@@ -869,6 +891,7 @@ function render() {
   }
 
   grid.innerHTML = filtered.map(book => renderBookCard(book)).join('');
+  syncSynopsisToggles();
 }
 
 function renderBookCard(book) {
@@ -877,6 +900,7 @@ function renderBookCard(book) {
   const voters = Object.keys(book.votes || {}).join(', ') || '暂无';
   const statusLabels = { candidate: '备选', reading: '在读', finished: '已读' };
   const reviewCount = (book.reviews || []).length;
+  const isSynopsisExpanded = !!expandedSynopsis[book.id];
 
   const coverHtml = book.cover
     ? `<div class="book-cover"><img src="${escHtml(book.cover)}" alt="封面" onerror="this.parentElement.innerHTML='📖'" /></div>`
@@ -910,7 +934,8 @@ function renderBookCard(book) {
             ${book.rating ? `<span class="book-rating">⭐ ${book.rating}${book.ratingSource ? ' · ' + escHtml(book.ratingSource) : ''}</span>` : ''}
             <span class="book-category">${escHtml(book.category)}</span>
           </div>
-          <div class="book-synopsis">${escHtml(book.synopsis || '暂无简介')}</div>
+          <div class="book-synopsis ${isSynopsisExpanded ? 'expanded' : ''}" id="synopsis-${book.id}">${escHtml(book.synopsis || '暂无简介')}</div>
+          <button type="button" class="synopsis-toggle" id="synopsisToggle-${book.id}" onclick="toggleSynopsis('${book.id}')">${isSynopsisExpanded ? '收起' : '展开'}</button>
           ${resourcesHtml}
         </div>
       </div>
@@ -992,6 +1017,28 @@ function renderReviews(book) {
 function toggleReviews(bookId) {
   expandedReviews[bookId] = !expandedReviews[bookId];
   render();
+}
+
+function toggleSynopsis(bookId) {
+  expandedSynopsis[bookId] = !expandedSynopsis[bookId];
+  render();
+}
+
+function syncSynopsisToggles() {
+  document.querySelectorAll('.book-synopsis').forEach(el => {
+    const synopsisId = el.id || '';
+    if (!synopsisId.startsWith('synopsis-')) return;
+    const bookId = synopsisId.slice('synopsis-'.length);
+    const toggle = document.getElementById(`synopsisToggle-${bookId}`);
+    if (!toggle) return;
+
+    const expanded = !!expandedSynopsis[bookId];
+    const hasOverflow = el.scrollHeight > el.clientHeight + 1;
+    const shouldShow = expanded || hasOverflow;
+
+    toggle.style.display = shouldShow ? 'inline-block' : 'none';
+    toggle.textContent = expanded ? '收起' : '展开';
+  });
 }
 
 async function toggleVote(bookId) {
