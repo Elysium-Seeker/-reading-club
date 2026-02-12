@@ -205,8 +205,9 @@ def clean_html_text(raw_html):
 
 def fetch_douban_best_metadata(title, author=''):
     cache_key = normalize_key(title, author)
-    if cache_key in DOUBAN_CACHE:
-        return DOUBAN_CACHE[cache_key]
+    cached = DOUBAN_CACHE.get(cache_key)
+    if cached:
+        return cached
 
     try:
         query = urllib.parse.quote(f"{title} {author}".strip())
@@ -232,7 +233,13 @@ def fetch_douban_best_metadata(title, author=''):
             html = urllib.request.urlopen(dreq, timeout=8).read().decode('utf-8', 'ignore')
 
             title_match = re.search(r'<span\s+property="v:itemreviewed">([^<]+)</span>', html)
+            if not title_match:
+                title_match = re.search(r'<h1[^>]*>\s*<span[^>]*>([^<]+)</span>', html)
+            if not title_match:
+                title_match = re.search(r'<meta\s+property="og:title"\s+content="([^"]+)"', html)
             db_title = html_lib.unescape(title_match.group(1).strip()) if title_match else ''
+            if db_title.endswith('(豆瓣)'):
+                db_title = db_title[:-4].strip()
 
             info_match = re.search(r'<div\s+id="info"[^>]*>([\s\S]*?)</div>', html)
             info_text = clean_html_text(info_match.group(1)) if info_match else ''
@@ -271,14 +278,12 @@ def fetch_douban_best_metadata(title, author=''):
                 best = candidate
 
         # 低匹配结果直接忽略，避免误填
-        if best_score < 30:
-            DOUBAN_CACHE[cache_key] = None
+        if best_score < 24:
             return None
 
         DOUBAN_CACHE[cache_key] = best
         return best
     except Exception:
-        DOUBAN_CACHE[cache_key] = None
         return None
 
 
