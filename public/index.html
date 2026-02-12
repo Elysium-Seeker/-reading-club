@@ -580,8 +580,7 @@
     <div class="user-bar">
       <label>👤 我的 ID:</label>
       <input type="text" id="userId" placeholder="输入你的昵称" />
-      <label>👥 群组:</label>
-      <input type="text" id="groupId" placeholder="群组ID" />
+      <span id="activeGroupTag" style="font-size:0.8em; opacity:0.85;">当前：个人模式</span>
     </div>
   </div>
 </div>
@@ -688,6 +687,18 @@
         <label>简介</label>
         <textarea id="inputSynopsis" placeholder="简要介绍这本书的内容..."></textarea>
       </div>
+
+      <div style="margin-top:12px; border-top:1px dashed var(--border); padding-top:12px;">
+        <label style="display:block; font-size:0.88em; font-weight:600; margin-bottom:6px; color:var(--primary);">📦 批量上传（按行输入）</label>
+        <p style="font-size:0.8em; color:#888; margin-bottom:8px;">每行一本，支持「书名」或「书名 | 作者」，系统会自动搜索并补全后批量添加。</p>
+        <textarea id="bulkTitles" placeholder="示例：
+百年孤独
+三体 | 刘慈欣
+局外人 | 阿尔贝·加缪" style="width:100%; min-height:110px; padding:10px; border:1px solid var(--border); border-radius:8px; resize:vertical; font-family:inherit;"></textarea>
+        <div style="display:flex; justify-content:flex-end; margin-top:8px;">
+          <button class="btn-confirm" type="button" onclick="submitBulkBooks()">批量添加</button>
+        </div>
+      </div>
     </div>
 
     <div class="modal-actions">
@@ -711,17 +722,14 @@
 
 <div class="modal-overlay" id="sessionModal" style="z-index:300;">
   <div class="modal" style="max-width:420px;">
-    <h2>欢迎加入阅读群组</h2>
+    <h2>欢迎进入阅读计划</h2>
     <div class="form-group">
       <label>你的 ID（必填）</label>
       <input type="text" id="sessionUserId" placeholder="例如：alice" />
     </div>
-    <div class="form-group">
-      <label>群组 ID（必填）</label>
-      <input type="text" id="sessionGroupId" placeholder="例如：bookclub-2026" />
-    </div>
+    <p style="font-size:0.85em; color:#777; margin:0;">群组可稍后在「群组页」加入和切换，你可以先个人使用。</p>
     <div class="modal-actions">
-      <button class="btn-confirm" onclick="confirmSession()">进入群组</button>
+      <button class="btn-confirm" onclick="confirmSession()">进入</button>
     </div>
   </div>
 </div>
@@ -739,15 +747,9 @@ let sessionReady = false;
 
 // 用户 ID
 const userIdInput = document.getElementById('userId');
-const groupIdInput = document.getElementById('groupId');
 userIdInput.value = localStorage.getItem('readingclub_userId') || '';
-groupIdInput.value = localStorage.getItem('readingclub_groupId') || '';
 userIdInput.addEventListener('input', () => {
   localStorage.setItem('readingclub_userId', userIdInput.value);
-  updateNavLinks();
-});
-groupIdInput.addEventListener('input', () => {
-  localStorage.setItem('readingclub_groupId', groupIdInput.value);
   updateNavLinks();
 });
 
@@ -755,44 +757,45 @@ function getUserId() {
   return userIdInput.value.trim();
 }
 
-function getGroupId() {
-  return groupIdInput.value.trim();
+function getActiveGroupId() {
+  const gid = (localStorage.getItem('readingclub_activeGroupId') || '').trim();
+  if (gid) return gid;
+  const uid = getUserId();
+  return uid ? `solo:${uid}` : '';
 }
 
 function updateNavLinks() {
-  const params = new URLSearchParams({ userId: getUserId(), groupId: getGroupId() }).toString();
+  const activeGroup = getActiveGroupId();
+  const params = new URLSearchParams({ userId: getUserId(), groupId: activeGroup }).toString();
   document.getElementById('myPageLink').href = `profile.html?${params}`;
   document.getElementById('groupPageLink').href = `group.html?${params}`;
   document.getElementById('reviewPageLink').href = `reviews.html?${params}`;
+  const tag = document.getElementById('activeGroupTag');
+  if (tag) {
+    tag.textContent = activeGroup && !activeGroup.startsWith('solo:') ? `当前群组：${activeGroup}` : '当前：个人模式';
+  }
 }
 
 async function requireSession() {
   const uid = getUserId();
-  const gid = getGroupId();
-  if (uid && gid) {
-    await api('/api/session/join', 'POST', { userId: uid, groupId: gid });
+  if (uid) {
     sessionReady = true;
     updateNavLinks();
     return true;
   }
   document.getElementById('sessionUserId').value = uid;
-  document.getElementById('sessionGroupId').value = gid;
   document.getElementById('sessionModal').classList.add('show');
   return false;
 }
 
 async function confirmSession() {
   const uid = document.getElementById('sessionUserId').value.trim();
-  const gid = document.getElementById('sessionGroupId').value.trim();
-  if (!uid || !gid) {
-    alert('ID 和群组 ID 都不能为空');
+  if (!uid) {
+    alert('ID 不能为空');
     return;
   }
   userIdInput.value = uid;
-  groupIdInput.value = gid;
   localStorage.setItem('readingclub_userId', uid);
-  localStorage.setItem('readingclub_groupId', gid);
-  await api('/api/session/join', 'POST', { userId: uid, groupId: gid });
   document.getElementById('sessionModal').classList.remove('show');
   sessionReady = true;
   updateNavLinks();
@@ -812,7 +815,7 @@ async function loadBooks() {
     const ok = await requireSession();
     if (!ok) return;
   }
-  const params = new URLSearchParams({ userId: getUserId(), groupId: getGroupId() });
+  const params = new URLSearchParams({ userId: getUserId(), groupId: getActiveGroupId() });
   books = await api(`/api/books?${params}`);
   render();
 }
@@ -909,7 +912,7 @@ function renderBookCard(book) {
           <option value="reading" ${book.status === 'reading' ? 'selected' : ''}>📖 在读</option>
           <option value="finished" ${book.status === 'finished' ? 'selected' : ''}>✅ 已读</option>
         </select>
-        <a class="btn-sm btn-review" style="text-decoration:none;" href="reviews.html?bookId=${book.id}&userId=${encodeURIComponent(getUserId())}&groupId=${encodeURIComponent(getGroupId())}">💬 书评 (${reviewCount})</a>
+        <a class="btn-sm btn-review" style="text-decoration:none;" href="reviews.html?bookId=${book.id}&userId=${encodeURIComponent(getUserId())}&groupId=${encodeURIComponent(getActiveGroupId())}">💬 书评 (${reviewCount})</a>
         <button class="btn-sm btn-del" onclick="openDeleteModal('${book.id}', '${escHtml(book.title)}')">🗑️</button>
         <span class="book-added-by">由 ${escHtml(book.addedBy)} 添加</span>
       </div>
@@ -980,12 +983,12 @@ function toggleReviews(bookId) {
 }
 
 async function toggleVote(bookId) {
-  await api(`/api/books/${bookId}/vote`, 'POST', { userId: getUserId(), groupId: getGroupId() });
+  await api(`/api/books/${bookId}/vote`, 'POST', { userId: getUserId(), groupId: getActiveGroupId() });
   await loadBooks();
 }
 
 async function changeStatus(bookId, status) {
-  await api(`/api/books/${bookId}`, 'PUT', { status, userId: getUserId(), groupId: getGroupId() });
+  await api(`/api/books/${bookId}`, 'PUT', { status, userId: getUserId(), groupId: getActiveGroupId() });
   await loadBooks();
 }
 
@@ -1041,7 +1044,7 @@ async function openAddModal() {
 
 function closeAddModal() {
   document.getElementById('addModal').classList.remove('show');
-  ['searchTitle', 'searchAuthor', 'inputTitle','inputAuthor','inputRating','inputRatingSource','inputCover','inputSynopsis'].forEach(id => {
+  ['searchTitle', 'searchAuthor', 'inputTitle','inputAuthor','inputRating','inputRatingSource','inputCover','inputSynopsis','bulkTitles'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -1126,8 +1129,37 @@ async function submitBook() {
     synopsis: document.getElementById('inputSynopsis').value.trim(),
     resources: selectedSearchResources,
     addedBy: getUserId(),
-    groupId: getGroupId()
+    groupId: getActiveGroupId()
   });
+  closeAddModal();
+  await loadBooks();
+}
+
+async function submitBulkBooks() {
+  const raw = document.getElementById('bulkTitles').value;
+  const lines = raw
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) {
+    alert('请先输入至少一行书名');
+    return;
+  }
+
+  const result = await api('/api/books/bulk', 'POST', {
+    entries: lines,
+    addedBy: getUserId(),
+    groupId: getActiveGroupId()
+  });
+
+  if (result.error) {
+    alert(result.error);
+    return;
+  }
+
+  const skipped = Array.isArray(result.skipped) ? result.skipped.length : 0;
+  alert(`批量上传完成：成功 ${result.count || 0} 本，跳过 ${skipped} 本`);
   closeAddModal();
   await loadBooks();
 }

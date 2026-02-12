@@ -850,6 +850,22 @@ def ensure_data_schema(data):
     if 'groups' not in data or not isinstance(data['groups'], dict):
         data['groups'] = {}
 
+    for gid, g in data['groups'].items():
+        if not isinstance(g, dict):
+            data['groups'][gid] = {
+                'id': gid,
+                'name': gid,
+                'members': [],
+                'createdAt': datetime.now(timezone.utc).isoformat()
+            }
+            continue
+        if 'name' not in g or not str(g.get('name', '')).strip():
+            g['name'] = gid
+        if 'members' not in g or not isinstance(g['members'], list):
+            g['members'] = []
+        if 'id' not in g:
+            g['id'] = gid
+
     for book in data['books']:
         if 'groupId' not in book:
             book['groupId'] = 'default'
@@ -876,22 +892,36 @@ def write_data(data):
 def ensure_group(data, group_id):
     if not group_id:
         return
+    if str(group_id).startswith('solo:'):
+        return
     if group_id not in data['groups']:
         data['groups'][group_id] = {
             'id': group_id,
+            'name': group_id,
             'members': [],
             'createdAt': datetime.now(timezone.utc).isoformat()
         }
+    elif not str(data['groups'][group_id].get('name', '')).strip():
+        data['groups'][group_id]['name'] = group_id
 
 
 def ensure_member(data, group_id, user_id):
     if not group_id or not user_id:
+        return
+    if str(group_id).startswith('solo:'):
         return
     ensure_group(data, group_id)
     members = data['groups'][group_id].get('members', [])
     if user_id not in members:
         members.append(user_id)
     data['groups'][group_id]['members'] = members
+
+
+def generate_group_id(data):
+    while True:
+        gid = f"grp-{uuid.uuid4().hex[:6]}"
+        if gid not in (data.get('groups') or {}):
+            return gid
 
 
 def get_books_by_group(data, group_id):
@@ -984,11 +1014,61 @@ def build_group_overview(data, group_id):
 
     return {
         'groupId': group_id,
+        'groupName': data['groups'][group_id].get('name') or group_id,
         'members': members,
         'perUserShelves': per_user,
         'everyoneReading': everyone_reading,
         'reviews': group_reviews
     }
+
+
+def get_user_groups(data, user_id):
+    groups = []
+    for gid, g in (data.get('groups') or {}).items():
+        if str(gid).startswith('solo:') or gid == 'default':
+            continue
+        members = g.get('members', [])
+        if user_id in members:
+            groups.append({
+                'groupId': gid,
+                'groupName': g.get('name') or gid,
+                'memberCount': len(members),
+                'createdAt': g.get('createdAt')
+            })
+    groups.sort(key=lambda x: x.get('groupId', ''))
+    return groups
+
+
+def create_book_record(payload, added_by, group_id):
+    return {
+        "id": str(uuid.uuid4()),
+        "title": payload.get("title", ""),
+        "author": payload.get("author", ""),
+        "synopsis": payload.get("synopsis", ""),
+        "rating": payload.get("rating"),
+        "ratingSource": payload.get("ratingSource", ""),
+        "category": payload.get("category", "未分类"),
+        "cover": payload.get("cover", ""),
+        "resources": payload.get("resources", []),
+        "addedBy": added_by,
+        "addedAt": datetime.now(timezone.utc).isoformat(),
+        "groupId": group_id,
+        "status": "candidate",
+        "userStatuses": {added_by: "candidate"},
+        "votes": {},
+        "reviews": []
+    }
+
+
+def parse_bulk_line(line):
+    text = str(line or '').strip()
+    if not text:
+        return '', ''
+    for sep in ['|', '｜', ' - ', ' — ', ' / ', '／', ' by ']:
+        if sep in text:
+            title, author = text.split(sep, 1)
+            return title.strip(), author.strip()
+    return text, ''
 
 
 class BookHandler(http.server.SimpleHTTPRequestHandler):
@@ -1059,6 +1139,14 @@ class BookHandler(http.server.SimpleHTTPRequestHandler):
                 return
             data = read_data()
             self.send_json(build_user_profile(data, user_id, group_id))
+        elif path.startswith('/api/users/') and path.endswith('/groups'):
+            parts = path.strip('/').split('/')
+            user_id = parts[2] if len(parts) >= 4 else ''
+            if not user_id:
+                self.send_json({'error': '缺少 userId'}, 400)
+                return
+            data = read_data()
+            self.send_json(get_user_groups(data, user_id))
         elif path.startswith('/api/groups/') and path.endswith('/overview'):
             parts = path.strip('/').split('/')
             group_id = parts[2] if len(parts) >= 4 else ''
@@ -1077,6 +1165,23 @@ class BookHandler(http.server.SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
+        if path == '/api/groups/create':
+            body = self.read_body()
+            user_id = str(body.get('userId', '')).strip()
+            group_name = str(body.get('groupName', '')).strip()
+            if not user_id:
+                self.send_json({'error': 'userId 不能为空'}, 400)
+                return
+            data = read_data()
+            group_id = generate_group_id(data)
+            ensure_group(data, group_id)
+            if group_name:
+                data['groups'][group_id]['name'] = group_name[:50]
+            ensure_member(data, group_id, user_id)
+            write_data(data)
+            self.send_json({'groupId': group_id, 'groupName': data['groups'][group_id].get('name') or group_id, 'owner': user_id, 'success': True})
+            return
+
         if path == '/api/session/join':
             body = self.read_body()
             user_id = str(body.get('userId', '')).strip()
@@ -1094,30 +1199,86 @@ class BookHandler(http.server.SimpleHTTPRequestHandler):
         if path == '/api/books':
             body = self.read_body()
             data = read_data()
-            group_id = str(body.get('groupId', '')).strip() or 'default'
-            added_by = body.get('addedBy', '匿名')
+            added_by = str(body.get('addedBy', '匿名')).strip() or '匿名'
+            group_id = str(body.get('groupId', '')).strip() or f"solo:{added_by}"
             ensure_member(data, group_id, added_by)
-            book = {
-                "id": str(uuid.uuid4()),
-                "title": body.get("title", ""),
-                "author": body.get("author", ""),
-                "synopsis": body.get("synopsis", ""),
-                "rating": body.get("rating"),
-                "ratingSource": body.get("ratingSource", ""),
-                "category": body.get("category", "未分类"),
-                "cover": body.get("cover", ""),
-                "resources": body.get("resources", []),
-                "addedBy": added_by,
-                "addedAt": datetime.now(timezone.utc).isoformat(),
-                "groupId": group_id,
-                "status": "candidate",
-                "userStatuses": {added_by: "candidate"},
-                "votes": {},
-                "reviews": []
-            }
+            book = create_book_record(body, added_by, group_id)
             data['books'].append(book)
             write_data(data)
             self.send_json(book)
+            return
+
+        if path == '/api/books/bulk':
+            body = self.read_body()
+            data = read_data()
+            added_by = str(body.get('addedBy', '匿名')).strip() or '匿名'
+            group_id = str(body.get('groupId', '')).strip() or f"solo:{added_by}"
+            entries = body.get('entries', [])
+            if not isinstance(entries, list) or not entries:
+                self.send_json({'error': 'entries 不能为空'}, 400)
+                return
+
+            ensure_member(data, group_id, added_by)
+            created = []
+            skipped = []
+
+            existing = {
+                (str(b.get('groupId', '')).strip(), normalize_key(b.get('title', ''), b.get('author', '')))
+                for b in data.get('books', [])
+            }
+
+            for raw in entries:
+                title = ''
+                author = ''
+                if isinstance(raw, dict):
+                    title = str(raw.get('title', '')).strip()
+                    author = str(raw.get('author', '')).strip()
+                else:
+                    title, author = parse_bulk_line(raw)
+
+                if not title:
+                    continue
+
+                duplicate_key = (group_id, normalize_key(title, author))
+                if duplicate_key in existing:
+                    skipped.append({'title': title, 'author': author, 'reason': '已存在'})
+                    continue
+
+                payload = {
+                    'title': title,
+                    'author': author,
+                    'category': '文学小说',
+                    'synopsis': '',
+                    'rating': None,
+                    'ratingSource': '',
+                    'cover': '',
+                    'resources': []
+                }
+
+                try:
+                    found = search_book_info(title, author)
+                    if isinstance(found, list) and found:
+                        best = found[0]
+                        payload.update({
+                            'title': best.get('title') or title,
+                            'author': best.get('author') or author,
+                            'category': best.get('category', '文学小说'),
+                            'synopsis': best.get('synopsis', ''),
+                            'rating': best.get('rating'),
+                            'ratingSource': best.get('ratingSource', ''),
+                            'cover': best.get('cover', ''),
+                            'resources': best.get('resources', [])
+                        })
+                except Exception:
+                    pass
+
+                book = create_book_record(payload, added_by, group_id)
+                data['books'].append(book)
+                existing.add((group_id, normalize_key(book.get('title', ''), book.get('author', ''))))
+                created.append({'id': book['id'], 'title': book['title'], 'author': book['author']})
+
+            write_data(data)
+            self.send_json({'created': created, 'skipped': skipped, 'count': len(created), 'success': True})
             return
 
         # 投票
@@ -1200,6 +1361,26 @@ class BookHandler(http.server.SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         parts = path.strip('/').split('/')
+
+        # 修改群组名称（ID 保持不变）
+        if len(parts) == 3 and parts[0] == 'api' and parts[1] == 'groups':
+            group_id = parts[2]
+            body = self.read_body()
+            new_name = str(body.get('groupName', '')).strip()
+            user_id = str(body.get('userId', '')).strip()
+            if not new_name:
+                self.send_json({'error': 'groupName 不能为空'}, 400)
+                return
+            data = read_data()
+            ensure_group(data, group_id)
+            members = data['groups'][group_id].get('members', [])
+            if user_id and user_id not in members:
+                self.send_json({'error': '仅群组成员可修改群名'}, 403)
+                return
+            data['groups'][group_id]['name'] = new_name[:50]
+            write_data(data)
+            self.send_json({'groupId': group_id, 'groupName': data['groups'][group_id]['name'], 'success': True})
+            return
 
         # 更新书籍
         if len(parts) == 3 and parts[0] == 'api' and parts[1] == 'books':

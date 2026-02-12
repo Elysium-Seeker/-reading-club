@@ -1,2 +1,256 @@
 <!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>群组页</title><style>body{font-family:'Segoe UI','Microsoft YaHei',sans-serif;background:#f5f0eb;color:#3a3a3a;margin:0}.wrap{max-width:1080px;margin:0 auto;padding:20px}.btn{padding:6px 12px;border:1px solid #d8c7b7;border-radius:8px;background:#fff;text-decoration:none;color:#5b4636}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.card{background:#fff;border:1px solid #eadfd5;border-radius:12px;padding:14px;margin-top:14px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}.meta{font-size:12px;color:#777}</style></head><body><div class="wrap"><div class="row"><a class="btn" id="backHome" href="index.html">← 返回书单</a><a class="btn" id="toProfile" href="profile.html">个人主页</a><h2 id="title" style="margin:0 0 0 auto;">👥 群组页</h2></div><div id="content"></div></div><script>const p=new URLSearchParams(location.search);const userId=p.get('userId')||localStorage.getItem('readingclub_userId')||'';const groupId=p.get('groupId')||localStorage.getItem('readingclub_groupId')||'';localStorage.setItem('readingclub_userId',userId);localStorage.setItem('readingclub_groupId',groupId);document.getElementById('title').textContent=`👥 群组：${groupId||'未设置'}`;document.getElementById('backHome').href=`index.html?userId=${encodeURIComponent(userId)}&groupId=${encodeURIComponent(groupId)}`;document.getElementById('toProfile').href=`profile.html?userId=${encodeURIComponent(userId)}&groupId=${encodeURIComponent(groupId)}`;async function api(u){return (await fetch(u)).json();}function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}async function load(){if(!groupId){document.getElementById('content').innerHTML='<div class="card">请先到首页填写群组 ID。</div>';return;}const d=await api(`/api/groups/${encodeURIComponent(groupId)}/overview`);const members=d.members||[];const per=d.perUserShelves||{};const everyone=d.everyoneReading||[];const reviews=d.reviews||[];document.getElementById('content').innerHTML=`<div class="card"><h3 style="margin:0 0 8px 0;">👥 成员 (${members.length})</h3><div>${members.map(m=>`<span style="display:inline-block;background:#efdfc9;padding:3px 10px;border-radius:12px;margin:0 6px 6px 0;">@${esc(m)}</span>`).join('')||'<span class="meta">暂无成员</span>'}</div></div><div class="card"><h3 style="margin:0 0 8px 0;">📖 大家都在读（2人及以上）</h3>${everyone.map(b=>`<div style="padding:8px 0;border-bottom:1px dashed #eee;"><strong>${esc(b.title)}</strong><div class="meta">${esc((b.users||[]).join('、'))}</div></div>`).join('')||'<div class="meta">暂无</div>'}</div><div class="grid">${members.map(m=>`<div class="card"><h3 style="margin:0 0 8px 0;">@${esc(m)}</h3>${['candidate','reading','finished'].map(k=>`<details style="margin-bottom:6px;"><summary style="cursor:pointer;">${k==='candidate'?'📋 想读':k==='reading'?'📖 在读':'✅ 已读'} (${(per[m]?.[k]||[]).length})</summary><div style="margin-top:6px;">${(per[m]?.[k]||[]).map(b=>`<div style="font-size:13px; padding:4px 0;">${esc(b.title)}</div>`).join('')||'<span class="meta">暂无</span>'}</div></details>`).join('')}</div>`).join('')}</div><div class="card"><h3 style="margin:0 0 8px 0;">💬 群组书评</h3>${reviews.map(r=>`<div style="padding:8px 0;border-bottom:1px dashed #eee;"><div class="meta">@${esc(r.userId)} · 《${esc(r.bookTitle)}》</div><div>${esc(r.content||'')}</div></div>`).join('')||'<div class="meta">暂无书评</div>'}</div>`;}load();</script></body></html>
+<html lang="zh-CN">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>群组功能</title>
+	<style>
+		body { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; background: #f5f0eb; color: #3a3a3a; margin: 0; }
+		.wrap { max-width: 1080px; margin: 0 auto; padding: 20px; }
+		.btn { padding: 6px 12px; border: 1px solid #d8c7b7; border-radius: 8px; background: #fff; text-decoration: none; color: #5b4636; cursor: pointer; }
+		.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+		.card { background: #fff; border: 1px solid #eadfd5; border-radius: 12px; padding: 14px; margin-top: 14px; }
+		.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+		.meta { font-size: 12px; color: #777; }
+		input { padding: 7px 10px; border: 1px solid #d8c7b7; border-radius: 8px; }
+		.tag { display: inline-block; background: #efdfc9; padding: 3px 10px; border-radius: 12px; }
+		.tag.active { background: #d9b98f; }
+		.danger { color: #a94442; }
+	</style>
+</head>
+<body>
+	<div class="wrap">
+		<div class="row">
+			<a class="btn" id="backHome" href="index.html">← 返回书单</a>
+			<a class="btn" id="toProfile" href="profile.html">个人主页</a>
+			<h2 id="title" style="margin:0 0 0 auto;">👥 群组功能</h2>
+		</div>
+
+		<div class="card">
+			<div class="row" style="margin-bottom:10px;">
+				<input id="createGroupName" placeholder="群组名称（可选）" style="min-width:220px" />
+				<button class="btn" id="createGroupBtn">+ 创建群组（系统分配ID）</button>
+				<span class="meta">创建后会自动加入并设为当前群组（ID 不变）</span>
+			</div>
+			<div class="row">
+				<input id="newGroupId" placeholder="输入群组ID加入" style="min-width:260px" />
+				<button class="btn" id="joinGroupBtn">加入群组</button>
+				<span class="meta">你可以加入多个群组，首页只展示当前激活群组</span>
+			</div>
+		</div>
+
+		<div id="groupList"></div>
+		<div id="content"></div>
+	</div>
+
+	<script>
+		const params = new URLSearchParams(location.search);
+		const userId = params.get('userId') || localStorage.getItem('readingclub_userId') || '';
+		let activeGroupId = params.get('groupId') || localStorage.getItem('readingclub_activeGroupId') || '';
+
+		if (userId) localStorage.setItem('readingclub_userId', userId);
+		if (activeGroupId && !activeGroupId.startsWith('solo:')) {
+			localStorage.setItem('readingclub_activeGroupId', activeGroupId);
+		}
+
+		const titleEl = document.getElementById('title');
+		const backHomeEl = document.getElementById('backHome');
+		const toProfileEl = document.getElementById('toProfile');
+		const groupListEl = document.getElementById('groupList');
+		const contentEl = document.getElementById('content');
+
+		titleEl.textContent = `👥 群组功能（@${userId || '未登录'}）`;
+
+		function esc(value) {
+			const div = document.createElement('div');
+			div.textContent = value || '';
+			return div.innerHTML;
+		}
+
+		function updateNavLinks() {
+			const gid = activeGroupId || '';
+			backHomeEl.href = `index.html?userId=${encodeURIComponent(userId)}&groupId=${encodeURIComponent(gid)}`;
+			toProfileEl.href = `profile.html?userId=${encodeURIComponent(userId)}&groupId=${encodeURIComponent(gid)}`;
+		}
+
+		async function api(url, method = 'GET', body = null) {
+			const opts = { method, headers: { 'Content-Type': 'application/json' } };
+			if (body) opts.body = JSON.stringify(body);
+			const res = await fetch(url, opts);
+			const data = await res.json();
+			if (!res.ok) {
+				throw new Error(data.error || '请求失败');
+			}
+			return data;
+		}
+
+		function setActiveGroup(groupId) {
+			activeGroupId = groupId || '';
+			if (activeGroupId) {
+				localStorage.setItem('readingclub_activeGroupId', activeGroupId);
+			} else {
+				localStorage.removeItem('readingclub_activeGroupId');
+			}
+			updateNavLinks();
+			load();
+		}
+
+		async function createGroup() {
+			if (!userId) {
+				alert('请先回首页设置用户ID');
+				return;
+			}
+			const groupName = document.getElementById('createGroupName').value.trim();
+			const result = await api('/api/groups/create', 'POST', { userId, groupName });
+			document.getElementById('createGroupName').value = '';
+			alert(`创建成功！\n群组名：${result.groupName || result.groupId}\n群组ID：${result.groupId}`);
+			setActiveGroup(result.groupId);
+		}
+
+		async function renameGroup(groupId, triggerBtn) {
+			if (!userId) {
+				alert('请先回首页设置用户ID');
+				return;
+			}
+			const row = triggerBtn ? triggerBtn.closest('.row') : null;
+			const input = row ? row.querySelector('input[data-rename-for]') : null;
+			if (!input) return;
+			const groupName = input.value.trim();
+			if (!groupName) {
+				alert('群组名称不能为空');
+				return;
+			}
+			await api(`/api/groups/${encodeURIComponent(groupId)}`, 'PUT', { userId, groupName });
+			await load();
+		}
+
+		async function joinGroup() {
+			if (!userId) {
+				alert('请先回首页设置用户ID');
+				return;
+			}
+			const gid = document.getElementById('newGroupId').value.trim();
+			if (!gid) {
+				alert('请输入群组ID');
+				return;
+			}
+			await api('/api/session/join', 'POST', { userId, groupId: gid });
+			document.getElementById('newGroupId').value = '';
+			setActiveGroup(gid);
+		}
+
+		function renderGroupList(groups) {
+			if (!groups.length) {
+				groupListEl.innerHTML = '<div class="card"><h3 style="margin:0 0 8px 0;">我加入的群组</h3><div class="meta danger">当前没有群组。你可以先创建一个，或输入群组ID加入。</div></div>';
+				return;
+			}
+
+			const html = groups.map(group => `
+				<div class="row" style="margin:6px 0;">
+					<span class="tag ${group.groupId === activeGroupId ? 'active' : ''}">${esc(group.groupName || group.groupId)}</span>
+					<span class="meta">ID: ${esc(group.groupId)}</span>
+					<span class="meta">成员 ${group.memberCount}</span>
+					<button class="btn set-active-btn" data-group-id="${esc(group.groupId)}">设为当前</button>
+					<input data-rename-for="${esc(group.groupId)}" value="${esc(group.groupName || group.groupId)}" placeholder="修改群组名称" style="min-width:180px" />
+					<button class="btn rename-btn" data-group-id="${esc(group.groupId)}">改名</button>
+				</div>
+			`).join('');
+
+			groupListEl.innerHTML = `<div class="card"><h3 style="margin:0 0 8px 0;">我加入的群组</h3>${html}</div>`;
+			groupListEl.querySelectorAll('.set-active-btn').forEach(btn => {
+				btn.addEventListener('click', () => setActiveGroup(btn.dataset.groupId || ''));
+			});
+			groupListEl.querySelectorAll('.rename-btn').forEach(btn => {
+				btn.addEventListener('click', () => renameGroup(btn.dataset.groupId || '', btn));
+			});
+		}
+
+		function renderOverview(groupId, overview) {
+			const members = overview.members || [];
+			const shelves = overview.perUserShelves || {};
+			const everyone = overview.everyoneReading || [];
+			const reviews = overview.reviews || [];
+			const groupName = overview.groupName || groupId;
+
+			contentEl.innerHTML = `
+				<div class="card">
+					<h3 style="margin:0 0 8px 0;">当前群组：${esc(groupName)}</h3>
+					<div class="meta" style="margin-bottom:8px;">群组ID：${esc(groupId)}</div>
+					<div>
+						${members.map(member => `<span class="tag" style="margin:0 6px 6px 0;">@${esc(member)}</span>`).join('') || '<span class="meta">暂无成员</span>'}
+					</div>
+				</div>
+				<div class="card">
+					<h3 style="margin:0 0 8px 0;">📖 大家都在读（2人及以上）</h3>
+					${everyone.map(book => `<div style="padding:8px 0;border-bottom:1px dashed #eee;"><strong>${esc(book.title)}</strong><div class="meta">${esc((book.users || []).join('、'))}</div></div>`).join('') || '<div class="meta">暂无</div>'}
+				</div>
+				<div class="grid">
+					${members.map(member => `
+						<div class="card">
+							<h3 style="margin:0 0 8px 0;">@${esc(member)}</h3>
+							${['candidate', 'reading', 'finished'].map(status => `
+								<details style="margin-bottom:6px;">
+									<summary style="cursor:pointer;">${status === 'candidate' ? '📋 想读' : status === 'reading' ? '📖 在读' : '✅ 已读'} (${(shelves[member]?.[status] || []).length})</summary>
+									<div style="margin-top:6px;">${(shelves[member]?.[status] || []).map(book => `<div style="font-size:13px; padding:4px 0;">${esc(book.title)}</div>`).join('') || '<span class="meta">暂无</span>'}</div>
+								</details>
+							`).join('')}
+						</div>
+					`).join('')}
+				</div>
+				<div class="card">
+					<h3 style="margin:0 0 8px 0;">💬 群组书评</h3>
+					${reviews.map(review => `<div style="padding:8px 0;border-bottom:1px dashed #eee;"><div class="meta">@${esc(review.userId)} · 《${esc(review.bookTitle)}》</div><div>${esc(review.content || '')}</div></div>`).join('') || '<div class="meta">暂无书评</div>'}
+				</div>
+			`;
+		}
+
+		async function load() {
+			updateNavLinks();
+			if (!userId) {
+				groupListEl.innerHTML = '<div class="card">请先回首页设置用户ID。</div>';
+				contentEl.innerHTML = '';
+				return;
+			}
+
+			let groups = [];
+			try {
+				groups = await api(`/api/users/${encodeURIComponent(userId)}/groups`);
+			} catch (error) {
+				groupListEl.innerHTML = `<div class="card danger">加载群组失败：${esc(error.message)}</div>`;
+				contentEl.innerHTML = '';
+				return;
+			}
+
+			const groupIds = new Set(groups.map(group => group.groupId));
+			if (activeGroupId && !groupIds.has(activeGroupId)) {
+				activeGroupId = '';
+				localStorage.removeItem('readingclub_activeGroupId');
+			}
+			if (!activeGroupId && groups.length) {
+				activeGroupId = groups[0].groupId;
+				localStorage.setItem('readingclub_activeGroupId', activeGroupId);
+			}
+
+			renderGroupList(groups);
+
+			if (!activeGroupId) {
+				contentEl.innerHTML = '<div class="card"><div class="meta">当前未激活群组，你可以继续使用个人模式，或先创建/加入一个群组。</div></div>';
+				updateNavLinks();
+				return;
+			}
+
+			try {
+				const overview = await api(`/api/groups/${encodeURIComponent(activeGroupId)}/overview`);
+				renderOverview(activeGroupId, overview);
+			} catch (error) {
+				contentEl.innerHTML = `<div class="card danger">加载群组概览失败：${esc(error.message)}</div>`;
+			}
+		}
+
+		document.getElementById('createGroupBtn').addEventListener('click', createGroup);
+		document.getElementById('joinGroupBtn').addEventListener('click', joinGroup);
+
+		load();
+	</script>
+</body>
+</html>
