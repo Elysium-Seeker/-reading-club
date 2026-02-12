@@ -1343,8 +1343,11 @@ async function confirmDelete() {
 
   if (deleteTargets.length) {
     const ids = [...deleteTargets];
-    const results = await Promise.all(ids.map(id => api(`/api/books/${id}`, 'DELETE')));
-    const failed = results.filter(r => !r._ok).length;
+    let failed = 0;
+    for (const id of ids) {
+      const result = await api(`/api/books/${id}`, 'DELETE');
+      if (!result._ok) failed += 1;
+    }
 
     ids.forEach(id => delete selectedBookIds[id]);
     closeDeleteModal();
