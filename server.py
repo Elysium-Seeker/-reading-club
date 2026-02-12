@@ -54,6 +54,30 @@ def normalize_key(title, author):
     return re.sub(r'[^\w\u4e00-\u9fff]+', '', raw)
 
 
+def is_reasonable_cjk_title_override(query_title, candidate_title):
+    query_raw = str(query_title or '').strip()
+    candidate_raw = str(candidate_title or '').strip()
+    if not query_raw or not candidate_raw:
+        return False
+
+    query_key = normalize_match_token(query_raw)
+    candidate_key = normalize_match_token(candidate_raw)
+    if not query_key or not candidate_key:
+        return False
+
+    if query_key == candidate_key:
+        return True
+
+    # 允许“主标题 + 分隔符 + 副标题”，禁止无分隔直接拼接误命中
+    if candidate_raw.startswith(query_raw):
+        suffix = candidate_raw[len(query_raw):].lstrip()
+        if not suffix:
+            return True
+        return suffix[0] in '：:（(【[·-—/ '
+
+    return False
+
+
 def to_float(value):
     try:
         if value is None:
@@ -210,18 +234,34 @@ def fetch_douban_best_metadata(title, author=''):
         return cached
 
     try:
+        def collect_subject_ids(page_html):
+            ids = []
+            patterns = [
+                r'book\.douban\.com/subject/(\d+)',
+                r'/book/subject/(\d+)',
+                r'"subject/(\d+)"',
+                r'\\u002Fsubject\\u002F(\d+)'
+            ]
+            for pattern in patterns:
+                for sid in re.findall(pattern, page_html or ''):
+                    if sid not in ids:
+                        ids.append(sid)
+            return ids
+
         query = urllib.parse.quote(f"{title} {author}".strip())
         search_url = f"https://m.douban.com/search/?query={query}&type=book"
         req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0'})
         search_html = urllib.request.urlopen(req, timeout=8).read().decode('utf-8', 'ignore')
 
-        subject_ids = re.findall(r'href="(?:https?://book\.douban\.com)?/book/subject/(\d+)/"', search_html)
-        if not subject_ids:
-            subject_ids = re.findall(r'/book/subject/(\d+)/', search_html)
-        unique_ids = []
-        for sid in subject_ids:
-            if sid not in unique_ids:
-                unique_ids.append(sid)
+        unique_ids = collect_subject_ids(search_html)
+
+        # 兜底：移动端页面结构变化时，尝试 PC 搜索页提取 subject id
+        if not unique_ids:
+            pc_search_url = f"https://www.douban.com/search?cat=1001&q={query}"
+            preq = urllib.request.Request(pc_search_url, headers={'User-Agent': 'Mozilla/5.0'})
+            pc_html = urllib.request.urlopen(preq, timeout=8).read().decode('utf-8', 'ignore')
+            unique_ids = collect_subject_ids(pc_html)
+
         unique_ids = unique_ids[:5]
 
         best = None
@@ -764,14 +804,49 @@ def merge_candidates(candidates):
 
 
 def search_book_info(title, author=""):
-    """聚合多个公开 API 搜索书籍并合并结果。"""
+    """豆瓣优先搜索；豆瓣无结果时再使用其它公开 API 聚合。"""
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        # 第一档：优先豆瓣（含作者匹配）
+        douban_candidates = fetch_douban_candidates(title, author)
+        if douban_candidates:
+            merged = merge_candidates(douban_candidates)
+            for index, item in enumerate(merged[:8]):
+                need_enrich = (
+                    not item.get('synopsis')
+                    or not item.get('cover')
+                    or (not item.get('rating'))
+                    or item.get('category') in ('', '文学小说')
+                )
+                if need_enrich and index < 4:
+                    merged[index] = enrich_candidate_metadata(item, title, author)
+
+            results = []
+            for item in merged[:8]:
+                final_resources = append_discovery_resources(
+                    item.get('resources', []),
+                    item.get('title', ''),
+                    item.get('author', '')
+                )
+                results.append({
+                    'title': item.get('title', ''),
+                    'author': item.get('author', ''),
+                    'synopsis': item.get('synopsis', ''),
+                    'rating': item.get('rating'),
+                    'ratingSource': item.get('ratingSource', ''),
+                    'category': item.get('category', '文学小说'),
+                    'cover': item.get('cover', ''),
+                    'year': item.get('year'),
+                    'source': item.get('source', '豆瓣'),
+                    'resources': final_resources
+                })
+            return results
+
+        # 第二档：豆瓣无结果时，回退到多源聚合
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = [
                 executor.submit(fetch_openlibrary_candidates, title, author),
                 executor.submit(fetch_googlebooks_candidates, title, author),
                 executor.submit(fetch_gutendex_candidates, title, author),
-                executor.submit(fetch_douban_candidates, title, author),
             ]
 
             all_candidates = []
@@ -1414,6 +1489,8 @@ class BookHandler(http.server.SimpleHTTPRequestHandler):
             ensure_member(data, group_id, added_by)
             created = []
             skipped = []
+            invalid = []
+            failed = []
 
             existing = {
                 (str(b.get('groupId', '')).strip(), normalize_key(b.get('title', ''), b.get('author', '')))
@@ -1430,6 +1507,7 @@ class BookHandler(http.server.SimpleHTTPRequestHandler):
                     title, author = parse_bulk_line(raw)
 
                 if not title:
+                    invalid.append({'raw': str(raw), 'reason': '书名为空'})
                     continue
 
                 duplicate_key = (group_id, normalize_key(title, author))
@@ -1448,30 +1526,101 @@ class BookHandler(http.server.SimpleHTTPRequestHandler):
                     'resources': []
                 }
 
+                query_is_cjk = contains_cjk(title) or contains_cjk(author)
+                douban_prefill = None
+                if query_is_cjk:
+                    try:
+                        douban_prefill = fetch_douban_best_metadata(title, author)
+                    except Exception:
+                        douban_prefill = None
+
                 try:
                     found = search_book_info(title, author)
                     if isinstance(found, list) and found:
                         best = found[0]
-                        payload.update({
-                            'title': best.get('title') or title,
-                            'author': best.get('author') or author,
-                            'category': best.get('category', '文学小说'),
-                            'synopsis': best.get('synopsis', ''),
-                            'rating': best.get('rating'),
-                            'ratingSource': best.get('ratingSource', ''),
-                            'cover': best.get('cover', ''),
-                            'resources': best.get('resources', [])
-                        })
+                        best_title = best.get('title') or title
+                        best_author = best.get('author') or author
+                        best_match = score_match(title, author, best_title, best_author)
+                        title_override_ok = True
+                        if query_is_cjk and contains_cjk(title):
+                            title_override_ok = is_reasonable_cjk_title_override(title, best_title)
+
+                        # 仅在匹配度足够时采用聚合首条，避免错误书目覆盖
+                        if best_match >= 26 and title_override_ok:
+                            payload.update({
+                                'title': best_title,
+                                'author': best_author,
+                                'category': best.get('category', '文学小说'),
+                                'synopsis': best.get('synopsis', ''),
+                                'rating': best.get('rating'),
+                                'ratingSource': best.get('ratingSource', ''),
+                                'cover': best.get('cover', ''),
+                                'resources': best.get('resources', [])
+                            })
+
+                    # 中文书兜底：若聚合结果简介/评分不足，再尝试豆瓣最佳匹配补齐
+                    if contains_cjk(title) or contains_cjk(author) or contains_cjk(payload.get('title') or ''):
+                        synopsis_text = str(payload.get('synopsis', '')).strip()
+                        need_synopsis = (not has_real_synopsis(synopsis_text)) or len(synopsis_text) < 40
+                        need_rating = not payload.get('rating')
+                        if need_synopsis or need_rating:
+                            # 优先用用户原始输入查询，避免聚合改名后错过豆瓣命中
+                            douban = douban_prefill or fetch_douban_best_metadata(title, author)
+                            if not douban:
+                                douban = fetch_douban_best_metadata(
+                                    payload.get('title') or title,
+                                    payload.get('author') or author
+                                )
+                            if douban:
+                                current_match = score_match(
+                                    title,
+                                    author,
+                                    payload.get('title', ''),
+                                    payload.get('author', '')
+                                )
+                                douban_match = score_match(
+                                    title,
+                                    author,
+                                    douban.get('title', ''),
+                                    douban.get('author', '')
+                                )
+
+                                # 若聚合首条候选偏离查询，优先采用豆瓣标题作者
+                                if douban_match >= max(40, current_match):
+                                    payload['title'] = douban.get('title') or payload.get('title') or title
+                                    payload['author'] = douban.get('author') or payload.get('author') or author
+
+                                if need_synopsis and has_real_synopsis(douban.get('synopsis', '')):
+                                    payload['synopsis'] = douban.get('synopsis', '')
+                                if need_rating and douban.get('rating'):
+                                    payload['rating'] = douban.get('rating')
+                                    payload['ratingSource'] = douban.get('ratingSource', '豆瓣')
+                                payload['resources'] = merge_resources((payload.get('resources') or []) + [douban.get('resource', {})])
                 except Exception:
                     pass
 
-                book = create_book_record(payload, added_by, group_id)
-                data['books'].append(book)
-                existing.add((group_id, normalize_key(book.get('title', ''), book.get('author', ''))))
-                created.append({'id': book['id'], 'title': book['title'], 'author': book['author']})
+                final_key = (group_id, normalize_key(payload.get('title', ''), payload.get('author', '')))
+                if final_key in existing:
+                    skipped.append({'title': payload.get('title', title), 'author': payload.get('author', author), 'reason': '批量内重复/已存在'})
+                    continue
+
+                try:
+                    book = create_book_record(payload, added_by, group_id)
+                    data['books'].append(book)
+                    existing.add((group_id, normalize_key(book.get('title', ''), book.get('author', ''))))
+                    created.append({'id': book['id'], 'title': book['title'], 'author': book['author']})
+                except Exception as e:
+                    failed.append({'title': payload.get('title', title), 'author': payload.get('author', author), 'reason': str(e)})
 
             write_data(data)
-            self.send_json({'created': created, 'skipped': skipped, 'count': len(created), 'success': True})
+            self.send_json({
+                'created': created,
+                'skipped': skipped,
+                'invalid': invalid,
+                'failed': failed,
+                'count': len(created),
+                'success': True
+            })
             return
 
         # 投票

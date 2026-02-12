@@ -1308,7 +1308,19 @@ async function submitBulkBooks() {
     }
 
     const skipped = Array.isArray(result.skipped) ? result.skipped.length : 0;
-    alert(`批量上传完成：成功 ${result.count || 0} 本，跳过 ${skipped} 本`);
+    const invalid = Array.isArray(result.invalid) ? result.invalid.length : 0;
+    const failed = Array.isArray(result.failed) ? result.failed.length : 0;
+    let message = `批量上传完成：成功 ${result.count || 0} 本，跳过 ${skipped} 本，无效 ${invalid} 本，失败 ${failed} 本`;
+
+    if (failed > 0) {
+      const sample = result.failed.slice(0, 2).map(x => `${x.title || '未命名'}（${x.reason || '未知错误'}）`).join('；');
+      if (sample) message += `\n失败示例：${sample}`;
+    }
+    if (invalid > 0) {
+      message += '\n提示：无效行通常是空行或缺少书名。';
+    }
+
+    alert(message);
     closeAddModal();
     await loadBooks();
   } catch (e) {
