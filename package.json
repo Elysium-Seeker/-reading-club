@@ -1,0 +1,13 @@
+{
+  "name": "reading-club",
+  "version": "1.0.0",
+  "description": "阅读计划协作管理工具",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "uuid": "^9.0.0"
+  }
+}

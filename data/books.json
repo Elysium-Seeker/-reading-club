@@ -1,0 +1,96 @@
+{
+  "books": [
+    {
+      "id": "sample-001",
+      "title": "百年孤独",
+      "author": "加西亚·马尔克斯",
+      "synopsis": "《百年孤独》是魔幻现实主义文学的代表作，描写了布恩迪亚家族七代人的传奇故事，以及加勒比海沿岸小镇马孔多的百年兴衰，反映了拉丁美洲一个世纪以来风云变幻的历史。",
+      "rating": 9.4,
+      "ratingSource": "豆瓣",
+      "category": "文学小说",
+      "cover": "https://img2.doubanio.com/view/subject/s/public/s6384944.jpg",
+      "addedBy": "示例",
+      "addedAt": "2026-02-12T10:00:00.000Z",
+      "status": "candidate",
+      "votes": {},
+      "reviews": []
+    },
+    {
+      "id": "sample-002",
+      "title": "三体",
+      "author": "刘慈欣",
+      "synopsis": "文化大革命如火如荼进行的同时，军方探寻外星文明的绝秘计划《红岸工程》取得了突破性进展。四光年外的《三体文明》正苦苦挣扎。三体人由此得知了地球的存在。",
+      "rating": 8.8,
+      "ratingSource": "豆瓣",
+      "category": "科幻奇幻",
+      "cover": "https://img2.doubanio.com/view/subject/s/public/s2768378.jpg",
+      "addedBy": "示例",
+      "addedAt": "2026-02-12T10:01:00.000Z",
+      "status": "candidate",
+      "votes": {},
+      "reviews": []
+    },
+    {
+      "id": "sample-003",
+      "title": "人类简史",
+      "author": "尤瓦尔·赫拉利",
+      "synopsis": "从十万年前有生命迹象开始到21世纪资本、科技交织的人类发展史，将从从石器时代和农业时代到如今的信息时代，梳理影响人类发展的重大脉络，挖掘人类文化、宗教、法律、国家、信贷等产生的根源。",
+      "rating": 9.1,
+      "ratingSource": "豆瓣",
+      "category": "历史传记",
+      "cover": "https://img9.doubanio.com/view/subject/s/public/s27814883.jpg",
+      "addedBy": "示例",
+      "addedAt": "2026-02-12T10:02:00.000Z",
+      "status": "candidate",
+      "votes": {},
+      "reviews": []
+    },
+    {
+      "id": "36afee66-fc80-4284-8333-1e8d6f6abf22",
+      "title": "她的生活",
+      "author": "默音",
+      "synopsis": "【内容简介】\n ♪作家、译者 默音 全新中短篇小说集\n ♪比起描绘生活的无常，直抒人性的缺陷或许更现实\n ♪职场×家庭×友谊×未来 可视的空间和未知的世界，人都被情所困，人都为情所救\n 《她的生活》是默音全新中短篇小说集，收录《上海之夜》《彼岸之夏》《梦城》《竹本无心》《 柜中人》《舌中月》等六篇作品。她从文本、经验乃至其他地方拾取一个个“她”，写进小说的世界里。在默音笔下，主人公们从上海踱步东京，从未来走回千禧年，有人在青春的迷雾中一夜长大，有人在婚姻的泥潭里宛如婴孩……几乎每一个“她”都在面对不公、暴力和被丢下的命运，但好在拥有自由意志与爱之体验，千百种无常人生中多了一重确认。\n 本书是默音文学评论随笔集《笔的重量》姊妹篇。\n ·\n 《上海之夜》：写自己想写的，才是最佳的复仇。\n 《彼岸之夏》：在东京的霓虹灯下，寻找生活的出口。\n 《梦城》：生活就像脚本现成的视梦，大家都是演员，按部就班地完成。\n 《竹本无心》：回忆是一条河",
+      "rating": 8.2,
+      "ratingSource": "豆瓣",
+      "category": "文学小说",
+      "cover": "",
+      "resources": [
+        {
+          "name": "Google Books 页面",
+          "url": "http://books.google.com/books?id=YLh50QEACAAJ&dq=intitle:%E5%A5%B9%E7%9A%84%E7%94%9F%E6%B4%BB&hl=&as_pt=BOOKS&source=gbs_api",
+          "type": "详情"
+        },
+        {
+          "name": "Google Books 预览",
+          "url": "http://books.google.com/books?id=YLh50QEACAAJ&dq=intitle:%E5%A5%B9%E7%9A%84%E7%94%9F%E6%B4%BB&hl=&as_pt=BOOKS&cd=6&source=gbs_api",
+          "type": "预览"
+        },
+        {
+          "name": "Google Web Reader",
+          "url": "http://play.google.com/books/reader?id=YLh50QEACAAJ&hl=&as_pt=BOOKS&source=gbs_api",
+          "type": "在线阅读"
+        },
+        {
+          "name": "Google Books 页面",
+          "url": "http://books.google.com/books?id=YLh50QEACAAJ&dq=intitle:%E5%A5%B9%E7%9A%84%E7%94%9F%E6%B4%BB+inauthor:%E9%BB%98%E9%9F%B3&hl=&as_pt=BOOKS&source=gbs_api",
+          "type": "详情"
+        },
+        {
+          "name": "Google Books 预览",
+          "url": "http://books.google.com/books?id=YLh50QEACAAJ&dq=intitle:%E5%A5%B9%E7%9A%84%E7%94%9F%E6%B4%BB+inauthor:%E9%BB%98%E9%9F%B3&hl=&as_pt=BOOKS&cd=1&source=gbs_api",
+          "type": "预览"
+        },
+        {
+          "name": "豆瓣页面",
+          "url": "https://book.douban.com/subject/37098552/",
+          "type": "详情"
+        }
+      ],
+      "addedBy": "匿名",
+      "addedAt": "2026-02-12T09:29:03.079713+00:00",
+      "status": "candidate",
+      "votes": {},
+      "reviews": []
+    }
+  ]
+}
