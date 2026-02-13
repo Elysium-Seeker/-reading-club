@@ -660,6 +660,7 @@
     <button class="filter-btn" data-filter="finished">✅ 已读</button>
   </div>
   <input type="text" class="search-box" id="searchBox" placeholder="🔍 搜索书名、作者、分类..." />
+  <button class="bulk-del-btn" id="selectAllBtn" onclick="toggleSelectAllVisible()">☑️ 全选当前</button>
   <button class="bulk-del-btn" id="bulkDeleteBtn" onclick="openBulkDeleteModal()" disabled>🗑️ 批量删除 (0)</button>
   <button class="add-btn" onclick="openAddModal()">＋ 添加书籍</button>
 </div>
@@ -750,7 +751,7 @@
 
       <div style="margin-top:12px; border-top:1px dashed var(--border); padding-top:12px;">
         <label style="display:block; font-size:0.88em; font-weight:600; margin-bottom:6px; color:var(--primary);">📦 批量上传（按行输入）</label>
-        <p style="font-size:0.8em; color:#888; margin-bottom:8px;">每行一本，支持「书名」或「书名 | 作者」，系统会自动搜索并补全后批量添加。</p>
+        <p style="font-size:0.8em; color:#888; margin-bottom:8px;">每行一本，支持「书名」或「书名 | 作者」。将直接入库并附带豆瓣检索链接（不再自动抓取简介/评分）。</p>
         <textarea id="bulkTitles" placeholder="示例：
 百年孤独
 三体 | 刘慈欣
@@ -937,8 +938,31 @@ function render() {
   }
 
   grid.innerHTML = filtered.map(book => renderBookCard(book)).join('');
-  syncSynopsisToggles();
   updateBulkDeleteBtn();
+}
+
+function getVisibleBooks() {
+  let filtered = books.filter(b => {
+    if (currentFilter !== 'all' && b.status !== currentFilter) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      return b.title.toLowerCase().includes(q) ||
+             b.author.toLowerCase().includes(q) ||
+             b.category.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    switch (currentSort) {
+      case 'votes': return Object.keys(b.votes || {}).length - Object.keys(a.votes || {}).length;
+      case 'rating': return (b.rating || 0) - (a.rating || 0);
+      case 'reviews': return (b.reviews || []).length - (a.reviews || []).length;
+      default: return new Date(b.addedAt) - new Date(a.addedAt);
+    }
+  });
+
+  return filtered;
 }
 
 function renderBookCard(book) {
@@ -947,44 +971,22 @@ function renderBookCard(book) {
   const voters = Object.keys(book.votes || {}).join(', ') || '暂无';
   const statusLabels = { candidate: '备选', reading: '在读', finished: '已读' };
   const reviewCount = (book.reviews || []).length;
-  const isSynopsisExpanded = !!expandedSynopsis[book.id];
   const isSelected = !!selectedBookIds[book.id];
 
-  const coverHtml = book.cover
-    ? `<div class="book-cover"><img src="${escHtml(book.cover)}" alt="封面" onerror="this.parentElement.innerHTML='📖'" /></div>`
-    : `<div class="book-cover">📖</div>`;
-
-  const resourcePriority = { '电子书': 1, '在线阅读': 2, '借阅': 3, '预览': 4, '详情': 5, '检索': 6 };
-  const resources = (book.resources || [])
-    .slice()
-    .sort((a, b) => (resourcePriority[a.type] || 99) - (resourcePriority[b.type] || 99))
-    .slice(0, 8);
-  const resourcesHtml = resources.length
-    ? `<details style="margin-top:8px;"><summary style="cursor:pointer; font-size:0.8em; color:var(--primary)">资源链接 (${resources.length})</summary>
-        <div style="margin-top:6px; display:flex; flex-direction:column; gap:6px;">
-          ${resources.map(r => `<a href="${escHtml(r.url || '#')}" target="_blank" rel="noopener noreferrer" style="font-size:0.78em; color:var(--primary); text-decoration:none; background:var(--accent-light); border-radius:12px; padding:3px 10px; width:max-content;">${escHtml(r.type ? r.type + '：' : '')}${escHtml(r.name || '资源')}</a>`).join('')}
-        </div>
-      </details>`
-    : '';
-  const voteListHtml = `<details style="margin-left:6px;"><summary style="cursor:pointer; font-size:0.75em; color:#666;">想读名单</summary><div style="font-size:0.75em; color:#666; max-width:180px;">${escHtml(voters)}</div></details>`;
+  const doubanResource = (book.resources || []).find(r => (r.name || '').includes('豆瓣'));
+  const doubanSearchUrl = doubanResource?.url || `https://m.douban.com/search/?query=${encodeURIComponent(`${book.title || ''} ${book.author || ''}`.trim())}&type=book`;
+  const doubanLinkHtml = `<a href="${escHtml(doubanSearchUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block; margin-top:8px; font-size:0.8em; color:var(--primary); text-decoration:none; background:var(--accent-light); border-radius:12px; padding:4px 10px;">🔎 豆瓣检索</a>`;
 
   return `
     <div class="book-card ${isSelected ? 'selected' : ''}">
       <div class="book-top">
-        ${coverHtml}
         <div class="book-info">
           <h3>
             ${escHtml(book.title)}
             <span class="book-status status-${book.status}">${statusLabels[book.status]}</span>
           </h3>
           <div class="book-author">✍️ ${escHtml(book.author || '未知作者')}</div>
-          <div class="book-meta">
-            ${book.rating ? `<span class="book-rating">⭐ ${book.rating}${book.ratingSource ? ' · ' + escHtml(book.ratingSource) : ''}</span>` : ''}
-            <span class="book-category">${escHtml(book.category)}</span>
-          </div>
-          <div class="book-synopsis ${isSynopsisExpanded ? 'expanded' : ''}" id="synopsis-${book.id}">${escHtml(book.synopsis || '暂无简介')}</div>
-          <button type="button" class="synopsis-toggle" id="synopsisToggle-${book.id}" onclick="toggleSynopsis('${book.id}')">${isSynopsisExpanded ? '收起' : '展开'}</button>
-          ${resourcesHtml}
+          ${doubanLinkHtml}
         </div>
       </div>
       <div class="book-actions">
@@ -992,7 +994,6 @@ function renderBookCard(book) {
         <button class="btn-sm btn-vote ${voted ? 'voted' : ''}" onclick="toggleVote('${book.id}')" title="想读的人：${escHtml(voters)}">
           ${voted ? '❤️' : '🤍'} 想读 (${voteCount})
         </button>
-        ${voteListHtml}
         <select class="status-select" onchange="changeStatus('${book.id}', this.value)">
           <option value="candidate" ${book.status === 'candidate' ? 'selected' : ''}>📋 备选</option>
           <option value="reading" ${book.status === 'reading' ? 'selected' : ''}>📖 在读</option>
@@ -1096,10 +1097,38 @@ function getSelectedBookIds() {
 
 function updateBulkDeleteBtn() {
   const btn = document.getElementById('bulkDeleteBtn');
+  const selectAllBtn = document.getElementById('selectAllBtn');
   if (!btn) return;
+
+  const visibleBooks = getVisibleBooks();
+  const visibleIds = visibleBooks.map(b => b.id);
+  const selectedVisibleCount = visibleIds.filter(id => !!selectedBookIds[id]).length;
+  const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length;
+
   const count = getSelectedBookIds().length;
   btn.disabled = count === 0;
   btn.textContent = `🗑️ 批量删除 (${count})`;
+
+  if (selectAllBtn) {
+    selectAllBtn.disabled = visibleIds.length === 0;
+    selectAllBtn.textContent = allVisibleSelected ? '☑️ 取消全选当前' : '☑️ 全选当前';
+  }
+}
+
+function toggleSelectAllVisible() {
+  const visibleBooks = getVisibleBooks();
+  if (!visibleBooks.length) return;
+
+  const visibleIds = visibleBooks.map(b => b.id);
+  const allVisibleSelected = visibleIds.every(id => !!selectedBookIds[id]);
+
+  if (allVisibleSelected) {
+    visibleIds.forEach(id => delete selectedBookIds[id]);
+  } else {
+    visibleIds.forEach(id => { selectedBookIds[id] = true; });
+  }
+
+  render();
 }
 
 function toggleBookSelection(bookId, checked) {
@@ -1269,6 +1298,7 @@ async function submitBook() {
     cover: document.getElementById('inputCover').value.trim(),
     synopsis: document.getElementById('inputSynopsis').value.trim(),
     resources: selectedSearchResources,
+    autoMatch: true,
     addedBy: getUserId(),
     groupId: getActiveGroupId()
   });
@@ -1298,6 +1328,7 @@ async function submitBulkBooks() {
 
     const result = await api('/api/books/bulk', 'POST', {
       entries: lines,
+      autoMatch: true,
       addedBy: getUserId(),
       groupId: getActiveGroupId()
     });

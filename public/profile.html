@@ -1,2 +1,98 @@
 <!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>个人主页</title><style>body{font-family:'Segoe UI','Microsoft YaHei',sans-serif;background:#f5f0eb;color:#3a3a3a;margin:0}.wrap{max-width:980px;margin:0 auto;padding:20px}.btn{padding:6px 12px;border:1px solid #d8c7b7;border-radius:8px;background:#fff;text-decoration:none;color:#5b4636}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.card{background:#fff;border:1px solid #eadfd5;border-radius:12px;padding:14px;margin-top:14px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.meta{font-size:12px;color:#777}</style></head><body><div class="wrap"><div class="row"><a class="btn" id="backHome" href="index.html">← 返回书单</a><a class="btn" id="toGroup" href="group.html">群组页</a><h2 id="title" style="margin:0 0 0 auto;">👤 个人主页</h2></div><div id="content"></div></div><script>const p=new URLSearchParams(location.search);const userId=p.get('userId')||localStorage.getItem('readingclub_userId')||'';const groupId=p.get('groupId')||localStorage.getItem('readingclub_groupId')||'';localStorage.setItem('readingclub_userId',userId);localStorage.setItem('readingclub_groupId',groupId);document.getElementById('title').textContent=`👤 ${userId||'未登录'} 的主页`;document.getElementById('backHome').href=`index.html?userId=${encodeURIComponent(userId)}&groupId=${encodeURIComponent(groupId)}`;document.getElementById('toGroup').href=`group.html?userId=${encodeURIComponent(userId)}&groupId=${encodeURIComponent(groupId)}`;async function api(u){return (await fetch(u)).json();}function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}async function load(){if(!userId||!groupId){document.getElementById('content').innerHTML='<div class="card">请先到首页填写 ID 与群组。</div>';return;}const d=await api(`/api/users/${encodeURIComponent(userId)}/profile?groupId=${encodeURIComponent(groupId)}`);const shelves=d.shelves||{};const reviews=d.reviews||[];document.getElementById('content').innerHTML=`<div class="grid">${['candidate','reading','finished'].map(k=>`<div class="card"><h3 style="margin:0 0 8px 0;">${k==='candidate'?'📋 想读':k==='reading'?'📖 在读':'✅ 已读'}</h3>${(shelves[k]||[]).map(b=>`<div style="padding:6px 0;border-bottom:1px dashed #eee;">${esc(b.title)}</div>`).join('')||'<div class="meta">暂无</div>'}</div>`).join('')}</div><div class="card"><h3 style="margin:0 0 8px 0;">💬 我的书评</h3>${reviews.map(r=>`<div style="padding:8px 0;border-bottom:1px dashed #eee;"><div class="meta">《${esc(r.bookTitle)}》 ${r.rating?('· '+'⭐'.repeat(r.rating)):''}</div><div>${esc(r.content||'')}</div></div>`).join('')||'<div class="meta">暂无书评</div>'}</div>`;}load();</script></body></html>
+<html lang="zh-CN">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>个人主页</title>
+	<style>
+		body { font-family:'Segoe UI','Microsoft YaHei',sans-serif; background:#f5f0eb; color:#3a3a3a; margin:0; }
+		.wrap { max-width:980px; margin:0 auto; padding:20px; }
+		.btn { padding:6px 12px; border:1px solid #d8c7b7; border-radius:8px; background:#fff; text-decoration:none; color:#5b4636; }
+		.row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+		.card { background:#fff; border:1px solid #eadfd5; border-radius:12px; padding:14px; margin-top:14px; }
+		.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+		.meta { font-size:12px; color:#777; }
+	</style>
+</head>
+<body>
+	<div class="wrap">
+		<div class="row">
+			<a class="btn" id="backHome" href="index.html">← 返回书单</a>
+			<a class="btn" id="toGroup" href="group.html">群组页</a>
+			<h2 id="title" style="margin:0 0 0 auto;">👤 个人主页</h2>
+		</div>
+		<div id="content"></div>
+	</div>
+
+	<script>
+		const p = new URLSearchParams(location.search);
+		const userId = p.get('userId') || localStorage.getItem('readingclub_userId') || '';
+		const groupId = p.get('groupId') || localStorage.getItem('readingclub_activeGroupId') || localStorage.getItem('readingclub_groupId') || '';
+
+		localStorage.setItem('readingclub_userId', userId);
+		if (groupId) {
+			localStorage.setItem('readingclub_activeGroupId', groupId);
+			localStorage.setItem('readingclub_groupId', groupId);
+		}
+
+		document.getElementById('title').textContent = `👤 ${userId || '未登录'} 的主页`;
+		document.getElementById('backHome').href = `index.html?userId=${encodeURIComponent(userId)}&groupId=${encodeURIComponent(groupId)}`;
+		document.getElementById('toGroup').href = `group.html?userId=${encodeURIComponent(userId)}&groupId=${encodeURIComponent(groupId)}`;
+
+		async function api(url) {
+			return (await fetch(url)).json();
+		}
+
+		function esc(value) {
+			const div = document.createElement('div');
+			div.textContent = value || '';
+			return div.innerHTML;
+		}
+
+		function renderShelfItems(items) {
+			if (!items || !items.length) {
+				return '<div class="meta">暂无</div>';
+			}
+			return items.map(book => `
+				<div style="padding:6px 0;border-bottom:1px dashed #eee;">
+					<div>${esc(book.title)}</div>
+					<div class="meta">${esc(book.author || '未知作者')}</div>
+				</div>
+			`).join('');
+		}
+
+		async function load() {
+			if (!userId || !groupId) {
+				document.getElementById('content').innerHTML = '<div class="card">请先到首页填写 ID 与群组。</div>';
+				return;
+			}
+
+			const data = await api(`/api/users/${encodeURIComponent(userId)}/profile?groupId=${encodeURIComponent(groupId)}`);
+			const shelves = data.shelves || {};
+			const reviews = data.reviews || [];
+
+			document.getElementById('content').innerHTML = `
+				<div class="grid">
+					${['candidate', 'reading', 'finished'].map(key => `
+						<div class="card">
+							<h3 style="margin:0 0 8px 0;">${key==='candidate'?'📋 想读':key==='reading'?'📖 在读':'✅ 已读'}</h3>
+							${renderShelfItems(shelves[key] || [])}
+						</div>
+					`).join('')}
+				</div>
+				<div class="card">
+					<h3 style="margin:0 0 8px 0;">💬 我的书评</h3>
+					${reviews.map(review => `
+						<div style="padding:8px 0;border-bottom:1px dashed #eee;">
+							<div class="meta">《${esc(review.bookTitle)}》 ${review.rating ? ('· ' + '⭐'.repeat(review.rating)) : ''}</div>
+							<div>${esc(review.content || '')}</div>
+						</div>
+					`).join('') || '<div class="meta">暂无书评</div>'}
+				</div>
+			`;
+		}
+
+		load();
+	</script>
+</body>
+</html>
