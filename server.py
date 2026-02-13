@@ -1276,15 +1276,26 @@ def build_group_overview(data, group_id):
 
     for book in books:
         user_statuses = book.get('userStatuses') or {}
+        votes = book.get('votes') or {}
         reading_users = []
         for member in members:
             status = user_statuses.get(member)
-            if status in ('candidate', 'reading', 'finished'):
+            voted = bool(votes.get(member))
+
+            if status in ('reading', 'finished'):
                 per_user[member][status].append({
                     'id': book.get('id'),
                     'title': book.get('title'),
                     'author': book.get('author')
                 })
+
+            if voted:
+                per_user[member]['candidate'].append({
+                    'id': book.get('id'),
+                    'title': book.get('title'),
+                    'author': book.get('author')
+                })
+
             if status == 'reading':
                 reading_users.append(member)
 
